@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex, RwLock};
 #[derive(Debug, Default)]
 pub struct Cache<K, V> {
     // todo! Build your own cache type.
-    inner: ()
+    key: K,
+    value: V,
+    inner: (),
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
