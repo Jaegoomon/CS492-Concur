@@ -4,11 +4,21 @@
 
 // NOTE: Crossbeam channels are MPMC, which means that you don't need to wrap the receiver in
 // Arc<Mutex<..>>. Just clone the receiver and give it to each worker thread.
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-struct Job(Box<dyn FnOnce() + Send + 'static>);
+trait FnBox {
+    fn call_box(self: Box<Self>);
+}
+
+impl<F: FnOnce()> FnBox for F {
+    fn call_box(self: Box<F>) {
+        (*self)()
+    }
+}
+
+type Job = Box<FnBox + Send + 'static>;
 
 #[derive(Debug)]
 struct Worker {
@@ -21,6 +31,24 @@ impl Drop for Worker {
     /// `join`ed explicitly.
     fn drop(&mut self) {
         todo!()
+    }
+}
+
+impl Worker {
+    fn new(id: usize, receiver: Receiver<Job>) -> Worker {
+        let thread = thread::spawn(move || loop {
+            loop {
+                let job = receiver.recv().unwrap();
+                println!("Worker {} got a job; executing.", id);
+
+                job.call_box();
+            }
+        });
+
+        Worker {
+            id: id,
+            thread: Some(thread),
+        }
     }
 }
 
@@ -56,16 +84,25 @@ impl ThreadPoolInner {
 #[derive(Debug)]
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    job_sender: Option<Sender<Job>>,
-    pool_inner: Arc<ThreadPoolInner>,
+    job_sender: Sender<Job>,
+    //pool_inner: Arc<ThreadPoolInner>,
 }
 
 impl ThreadPool {
     /// Create a new ThreadPool with `size` threads. Panics if the size is 0.
     pub fn new(size: usize) -> Self {
         assert!(size > 0);
+        let (sender, receiver) = unbounded();
+        let job_sender = sender;
+        let mut workers = Vec::with_capacity(size);
 
-        todo!()
+        for id in 0..size {
+            workers.push(Worker::new(id, receiver.clone()));
+        }
+        ThreadPool {
+            workers,
+            job_sender,
+        }
     }
 
     /// Execute a new job in the thread pool.
@@ -73,7 +110,9 @@ impl ThreadPool {
     where
         F: FnOnce() + Send + 'static,
     {
-        todo!()
+        let job = Box::new(f);
+
+        self.job_sender.send(job).unwrap();
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
@@ -85,6 +124,12 @@ impl ThreadPool {
 impl Drop for ThreadPool {
     /// When dropped, all worker threads must be properly `join`ed.
     fn drop(&mut self) {
-        todo!()
+        for worker in &mut self.workers {
+            println!("Shutting down worker {}", worker.id);
+
+            if let Some(thread) = worker.thread.take() {
+                thread.join().unwrap();
+            }
+        }
     }
 }
