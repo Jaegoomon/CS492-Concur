@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex, RwLock};
 #[derive(Debug, Default)]
 pub struct Cache<K, V> {
     // todo! Build your own cache type.
-    key: K,
-    value: V,
+    hash: HashMap<K, V>,
+    //key: K,
+    //value: V,
     inner: (),
 }
 
@@ -25,6 +26,9 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
     /// duplicate the work. That is, `f` should be run only once for each key. Specifically, even
     /// for the concurrent invocations of `get_or_insert_with(key, f)`, `f` is called only once.
     pub fn get_or_insert_with<F: FnOnce(K) -> V>(&self, key: K, f: F) -> V {
-        todo!()
+        match self.hash.get(&key) {
+            Some(v) => v.clone(),
+            None => f(key),
+        }
     }
 }
