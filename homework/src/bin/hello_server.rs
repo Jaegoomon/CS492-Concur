@@ -22,6 +22,7 @@ fn main() -> io::Result<()> {
     // - A reporter: it aggregates the reports the reports from the workers and processes the
     //   statistics.  When it ends, it sends the statistics to the main thread.
     let pool = Arc::new(ThreadPool::new(7));
+    //println!("ThreadPool is made!!");
 
     // The (MPSC) channel of reports between workers and the reporter.
     let (report_sender, report_receiver) = unbounded();
