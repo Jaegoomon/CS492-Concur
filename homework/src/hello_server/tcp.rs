@@ -1,7 +1,7 @@
 //! TcpListener that can be cancelled.
 
 use std::io;
-use std::net::ToSocketAddrs;
+use std::net::{Shutdown, ToSocketAddrs};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -38,7 +38,13 @@ impl CancellableTcpListener {
     pub fn cancel(&self) -> io::Result<()> {
         // Set the flag first and make a bogus connection to itself to wake up the listener blocked
         // in `accept`. Use `TcpListener::local_addr` and `TcpStream::connect`.
-        todo!()
+        self.is_canceled.store(true, Ordering::Release);
+        match self.inner.accept() {
+            Ok((_socket, addr)) => Ok(_socket
+                .shutdown(Shutdown::Both)
+                .expect("shutdown call failed")),
+            Err(e) => Ok(()),
+        }
     }
 
     /// Returns an iterator over the connections being received on this listener.  The returned
