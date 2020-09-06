@@ -8,6 +8,11 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
+enum Message {
+    NewJob(Job),
+    Terminate,
+}
+
 trait FnBox {
     fn call_box(self: Box<Self>);
 }
@@ -35,13 +40,21 @@ impl Drop for Worker {
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Receiver<Job>) -> Worker {
+    fn new(id: usize, receiver: Receiver<Message>) -> Worker {
         let thread = thread::spawn(move || loop {
             loop {
-                let job = receiver.recv().unwrap();
-                println!("Worker {} got a job; executing.", id);
+                let message = receiver.recv().unwrap();
+                match message {
+                    Message::NewJob(job) => {
+                        println!("Worker {} got a job; executing.", id);
 
-                job.call_box();
+                        job.call_box();
+                    }
+                    Message::Terminate => {
+                        println!("Worker {} was told to terminate.", id);
+                        break;
+                    }
+                }
             }
         });
 
@@ -84,7 +97,7 @@ impl ThreadPoolInner {
 #[derive(Debug)]
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    job_sender: Sender<Job>,
+    job_sender: Sender<Message>,
     //pool_inner: Arc<ThreadPoolInner>,
 }
 
@@ -112,7 +125,7 @@ impl ThreadPool {
     {
         let job = Box::new(f);
 
-        self.job_sender.send(job).unwrap();
+        self.job_sender.send(Message::NewJob(job)).unwrap();
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
@@ -124,6 +137,13 @@ impl ThreadPool {
 impl Drop for ThreadPool {
     /// When dropped, all worker threads must be properly `join`ed.
     fn drop(&mut self) {
+        println!("Sending terminate message to all workers.");
+        // sending terminate message
+        for _ in &mut self.workers {
+            self.job_sender.send(Message::Terminate).unwrap();
+        }
+        println!("Shutting down workers.");
+        // join worker thread
         for worker in &mut self.workers {
             println!("Shutting down worker {}", worker.id);
 
