@@ -42,18 +42,16 @@ impl Drop for Worker {
 impl Worker {
     fn new(id: usize, receiver: Receiver<Message>) -> Worker {
         let thread = thread::spawn(move || loop {
-            loop {
-                let message = receiver.recv().unwrap();
-                match message {
-                    Message::NewJob(job) => {
-                        println!("Worker {} got a job; executing.", id);
+            let message = receiver.recv().unwrap();
+            match message {
+                Message::NewJob(job) => {
+                    println!("Worker {} got a job; executing.", id);
 
-                        job.call_box();
-                    }
-                    Message::Terminate => {
-                        println!("Worker {} was told to terminate.", id);
-                        break;
-                    }
+                    job.call_box();
+                }
+                Message::Terminate => {
+                    println!("Worker {} was told to terminate.", id);
+                    break;
                 }
             }
         });
