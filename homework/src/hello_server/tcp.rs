@@ -61,7 +61,7 @@ impl<'a> Iterator for Incoming<'a> {
         let stream: io::Result<TcpStream> = self.listener.inner.accept().map(|p| p.0);
         //todo!();
         let atomic_bool = &self.listener.is_canceled;
-        if !atomic_bool.load(Ordering::Relaxed) {
+        if !atomic_bool.load(Ordering::Acquire) {
             Some(stream)
         } else {
             None

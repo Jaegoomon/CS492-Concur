@@ -79,12 +79,16 @@ struct ThreadPoolInner {
 impl ThreadPoolInner {
     /// Increment the job count.
     fn start_job(&self) {
-        todo!()
+        let mut data = self.job_count.lock().unwrap();
+        *data += 1;
+        println!("[tpool] add (job count: {})", data);
     }
 
     /// Decrement the job count.
     fn finish_job(&self) {
-        todo!()
+        let mut data = self.job_count.lock().unwrap();
+        *data -= 1;
+        println!("[tpool] finish (job count: {})", data);
     }
 
     /// Wait until the job count becomes 0.
@@ -130,15 +134,13 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-
-        let mut data = &self.pool_inner.job_count.lock().unwrap();
-        println!("[tpool] add (job count: {})", data);
+        self.pool_inner.start_job();
         self.job_sender.send(Message::NewJob(job)).unwrap();
+        self.pool_inner.finish_job();
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
     pub fn join(&self) {
-        println!("[tpool] finish (job count: )");
         todo!()
     }
 }
