@@ -136,7 +136,7 @@ impl ThreadPool {
         let job = Box::new(f);
         self.pool_inner.start_job();
         self.job_sender.send(Message::NewJob(job)).unwrap();
-        self.pool_inner.finish_job();
+        // self.pool_inner.finish_job();
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
