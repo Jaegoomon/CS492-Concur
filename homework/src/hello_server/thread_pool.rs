@@ -23,7 +23,7 @@ impl<F: FnOnce()> FnBox for F {
     }
 }
 
-type Job = Box<FnBox + Send + 'static>;
+type Job = Box<dyn FnBox + Send + 'static>;
 
 #[derive(Debug)]
 struct Worker {
@@ -35,7 +35,12 @@ impl Drop for Worker {
     /// When dropped, the thread should be `join`ed. NOTE that the thread is detached if not
     /// `join`ed explicitly.
     fn drop(&mut self) {
-        todo!()
+        // join worker thread
+        println!("[Worker {}] joined", self.id);
+
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
     }
 }
 
@@ -45,12 +50,12 @@ impl Worker {
             let message = receiver.recv().unwrap();
             match message {
                 Message::NewJob(job) => {
-                    println!("Worker {} got a job; executing.", id);
-
+                    println!("[Worker {}] starts a job.", id);
                     job.call_box();
+                    println!("[Worker {}] finishes a job.", id);
                 }
                 Message::Terminate => {
-                    println!("Worker {} was told to terminate.", id);
+                    println!("[Worker {}] was terminating.", id);
                     break;
                 }
             }
@@ -68,7 +73,7 @@ impl Worker {
 #[derive(Debug, Default)]
 struct ThreadPoolInner {
     job_count: Mutex<usize>,
-    empty_condvar: Condvar,
+    //empty_condvar: Condvar,
 }
 
 impl ThreadPoolInner {
@@ -96,7 +101,7 @@ impl ThreadPoolInner {
 pub struct ThreadPool {
     workers: Vec<Worker>,
     job_sender: Sender<Message>,
-    //pool_inner: Arc<ThreadPoolInner>,
+    pool_inner: Arc<ThreadPoolInner>,
 }
 
 impl ThreadPool {
@@ -105,14 +110,17 @@ impl ThreadPool {
         assert!(size > 0);
         let (sender, receiver) = unbounded();
         let job_sender = sender;
+        let mut job_count = Mutex::new(0);
+        let mut pool_inner = ThreadPoolInner { job_count };
         let mut workers = Vec::with_capacity(size);
 
         for id in 0..size {
             workers.push(Worker::new(id, receiver.clone()));
         }
         ThreadPool {
-            workers,
-            job_sender,
+            workers: workers,
+            job_sender: job_sender,
+            pool_inner: Arc::new(pool_inner),
         }
     }
 
@@ -123,11 +131,14 @@ impl ThreadPool {
     {
         let job = Box::new(f);
 
+        let mut data = &self.pool_inner.job_count.lock().unwrap();
+        println!("[tpool] add (job count: {})", data);
         self.job_sender.send(Message::NewJob(job)).unwrap();
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
     pub fn join(&self) {
+        println!("[tpool] finish (job count: )");
         todo!()
     }
 }
@@ -142,12 +153,12 @@ impl Drop for ThreadPool {
         }
         println!("Shutting down workers.");
         // join worker thread
-        for worker in &mut self.workers {
+        /*for worker in &mut self.workers {
             println!("Shutting down worker {}", worker.id);
 
             if let Some(thread) = worker.thread.take() {
                 thread.join().unwrap();
             }
-        }
+        }*/
     }
 }

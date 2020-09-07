@@ -9,8 +9,6 @@ use std::sync::{Arc, Mutex, RwLock};
 pub struct Cache<K, V> {
     // todo! Build your own cache type.
     hash: HashMap<K, V>,
-    //key: K,
-    //value: V,
     inner: (),
 }
 
