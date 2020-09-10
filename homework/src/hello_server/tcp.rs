@@ -37,14 +37,21 @@ impl CancellableTcpListener {
     /// Signals the listener to stop accepting new connections.
     pub fn cancel(&self) -> io::Result<()> {
         // Set the flag first and make a bogus connection to itself to wake up the listener blocked
-        // in `accept`. Use `TcpListener::local_addr` and `TcpStream::connect`.
+        // in `accept`. Use `TcpListener::local`_addr` and `TcpStream::connect`.
         self.is_canceled.store(true, Ordering::Release);
-        match self.inner.accept() {
-            Ok((_socket, addr)) => Ok(_socket
-                .shutdown(Shutdown::Both)
-                .expect("shutdown call failed")),
-            Err(e) => Ok(()),
-        }
+        let local_addr = self.inner.local_addr().unwrap();
+        TcpStream::connect(local_addr);
+        Ok(())
+        /*match self.inner.accept() {
+            Ok((_socket, addr)) => {
+                println!("connect bogus?!");
+                Ok(())
+            }
+            Err(e) => {
+                println!("\naccept canceled!?");
+                Ok(())
+            }
+        }*/
     }
 
     /// Returns an iterator over the connections being received on this listener.  The returned

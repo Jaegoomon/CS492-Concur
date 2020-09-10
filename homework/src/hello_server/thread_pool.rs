@@ -72,7 +72,7 @@ impl Worker {
 /// closures via `Arc` so that the workers can report to the pool that it started/finished a job.
 #[derive(Debug, Default)]
 struct ThreadPoolInner {
-    job_count: Mutex<usize>,
+    job_count: Arc<Mutex<usize>>,
     //empty_condvar: Condvar,
 }
 
@@ -96,7 +96,8 @@ impl ThreadPoolInner {
     /// NOTE: We can optimize this function by adding another field to `ThreadPoolInner`, but let's
     /// not care about that in this homework.
     fn wait_empty(&self) {
-        todo!()
+        let count = self.job_count.clone();
+        while *count.lock().unwrap() != 0 {}
     }
 }
 
@@ -114,7 +115,7 @@ impl ThreadPool {
         assert!(size > 0);
         let (sender, receiver) = unbounded();
         let job_sender = sender;
-        let mut job_count = Mutex::new(0);
+        let mut job_count = Arc::new(Mutex::new(0));
         let mut pool_inner = ThreadPoolInner { job_count };
         let mut workers = Vec::with_capacity(size);
 
@@ -136,11 +137,12 @@ impl ThreadPool {
         let job = Box::new(f);
         self.pool_inner.start_job();
         self.job_sender.send(Message::NewJob(job)).unwrap();
-        // self.pool_inner.finish_job();
+        // condvar change
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
     pub fn join(&self) {
+        // check if condvar is changed
         todo!()
     }
 }
@@ -154,13 +156,6 @@ impl Drop for ThreadPool {
             self.job_sender.send(Message::Terminate).unwrap();
         }
         println!("Shutting down workers.");
-        // join worker thread
-        /*for worker in &mut self.workers {
-            println!("Shutting down worker {}", worker.id);
-
-            if let Some(thread) = worker.thread.take() {
-                thread.join().unwrap();
-            }
-        }*/
+        //self.pool_inner.wait_empty();
     }
 }
