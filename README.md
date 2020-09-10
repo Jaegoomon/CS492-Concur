@@ -4,6 +4,8 @@
 
 - Instructor: [Jeehoon Kang](https://cp.kaist.ac.kr/jeehoon.kang)
 - TA: [Jaehwang Jung](https://cp.kaist.ac.kr/jaehwang.jung)
+    + Office Hour: Friday 13:30-16:30 [(Google Meet)](https://meet.google.com/zqd-qmgd-sga).
+      See [below](#communication) for the office hour policy.
 - Time & Place: Tue & Thu 10:30am-11:45am, ~~Rm 1101, Bldg E3-1~~ [Youtube channel](https://www.youtube.com/playlist?list=PL5aMzERQ_OZ9j40DJNlsem2qAGoFbfwb4), [Google Meet chatting room](https://meet.google.com/zqd-qmgd-sga)
 - Website: https://github.com/kaist-cp/cs492-concur
 - Announcements: in [issue
@@ -15,13 +17,15 @@
 
 Due to COVID-19, we're going to conduct online sessions for this semester.
 
-- For non-realtime sessions, videos will be uploaded to a [Youtube channel](https://www.youtube.com/playlist?list=PL5aMzERQ_OZ9j40DJNlsem2qAGoFbfwb4).
+- For non-live sessions, videos will be uploaded to a [Youtube channel](https://www.youtube.com/playlist?list=PL5aMzERQ_OZ9j40DJNlsem2qAGoFbfwb4).
 
     + You're required to watch the video, and based on the contents, to solve pop quizzes that will
       be posted at gg.kaist.ac.kr. The details are announced in [an
       issue](https://github.com/kaist-cp/cs492-concur/issues/42).
 
-- For realtime sessions, we'll meet in a [Google Meet chatting room](https://meet.google.com/zqd-qmgd-sga).
+    + Turn on English subtitle at YouTube, if necessary.
+
+- For live sessions, we'll meet in a [Google Meet chatting room](https://meet.google.com/zqd-qmgd-sga).
 
 
 
@@ -214,6 +218,11 @@ each session.  You should submit a token within **12 hours from the beginning of
     + I'm requiring you to ask questions online first for two reasons. First, clearly writing a
       question is the first step to reach an answer. Second, you can benefit from questions and
       answers of other students.
+
+- We are NOT going to discuss *new* questions during the office hour. Before coming to the office
+  hour, please check if there is a similar question on the issue tracker.  If there isn't, file a
+  new issue and start discussion there. The agenda of the office hour will be the issues that are
+  not resolved yet.
 
 - Emails to the instructor or TAs should begin with "CS492C:" in the subject line, followed by a
   brief description of the purpose of your email.  The content should at least contain your name and
