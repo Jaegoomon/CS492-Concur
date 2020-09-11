@@ -9,7 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 enum Message {
-    NewJob(Job),
+    NewJob(Job, Arc<(Mutex<usize>, Condvar)>),
     Terminate,
 }
 
@@ -49,9 +49,16 @@ impl Worker {
         let thread = thread::spawn(move || loop {
             let message = receiver.recv().unwrap();
             match message {
-                Message::NewJob(job) => {
+                Message::NewJob(job, pair) => {
                     println!("[Worker {}] starts a job.", id);
                     job.call_box();
+                    println!("call job box\n");
+                    let (lock, cvar) = &*pair;
+                    let mut data = lock.lock().unwrap();
+                    if *data > 3 {
+                        *data -= 1;
+                        cvar.notify_one();
+                    }
                     println!("[Worker {}] finishes a job.", id);
                 }
                 Message::Terminate => {
@@ -72,21 +79,25 @@ impl Worker {
 /// closures via `Arc` so that the workers can report to the pool that it started/finished a job.
 #[derive(Debug, Default)]
 struct ThreadPoolInner {
-    job_count: Arc<Mutex<usize>>,
+    job_count: Arc<(Mutex<usize>, Condvar)>,
     //empty_condvar: Condvar,
 }
 
 impl ThreadPoolInner {
     /// Increment the job count.
     fn start_job(&self) {
-        let mut data = self.job_count.lock().unwrap();
+        let count = Arc::clone(&self.job_count);
+        let (lock, cvar) = &*count;
+        let mut data = lock.lock().unwrap();
         *data += 1;
         println!("[tpool] add (job count: {})", data);
     }
 
     /// Decrement the job count.
     fn finish_job(&self) {
-        let mut data = self.job_count.lock().unwrap();
+        let count = Arc::clone(&self.job_count);
+        let (lock, cvar) = &*count;
+        let mut data = lock.lock().unwrap();
         *data -= 1;
         println!("[tpool] finish (job count: {})", data);
     }
@@ -96,8 +107,9 @@ impl ThreadPoolInner {
     /// NOTE: We can optimize this function by adding another field to `ThreadPoolInner`, but let's
     /// not care about that in this homework.
     fn wait_empty(&self) {
-        let count = self.job_count.clone();
-        while *count.lock().unwrap() != 0 {}
+        //let count = self.job_count.clone();
+        //while *count.lock().unwrap() != 0 {}
+        todo!()
     }
 }
 
@@ -115,7 +127,7 @@ impl ThreadPool {
         assert!(size > 0);
         let (sender, receiver) = unbounded();
         let job_sender = sender;
-        let mut job_count = Arc::new(Mutex::new(0));
+        let mut job_count = Arc::new((Mutex::new(0), Condvar::new()));
         let mut pool_inner = ThreadPoolInner { job_count };
         let mut workers = Vec::with_capacity(size);
 
@@ -135,9 +147,18 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
+        let pair = Arc::clone(&self.pool_inner.job_count);
+        let pair2 = pair.clone();
+
         self.pool_inner.start_job();
-        self.job_sender.send(Message::NewJob(job)).unwrap();
-        // condvar change
+        let (lock, cvar) = &*pair;
+        let mut data = lock.lock().unwrap();
+        self.job_sender.send(Message::NewJob(job, pair2)).unwrap();
+        if *data > 3 {
+            println!("\nblocking\n");
+            cvar.wait(data).unwrap();
+            println!("\nunblocking\n");
+        }
     }
 
     /// Block the current thread until all jobs in the pool have been executed.
