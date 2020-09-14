@@ -41,7 +41,6 @@ impl CancellableTcpListener {
         self.is_canceled.store(true, Ordering::Release);
         let local_addr = self.inner.local_addr().unwrap();
         TcpStream::connect(local_addr);
-        TcpStream::connect(local_addr);
         Ok(())
     }
 
@@ -56,7 +55,6 @@ impl<'a> Iterator for Incoming<'a> {
     type Item = io::Result<TcpStream>;
     /// Returns None if the listener is `canceled.
     fn next(&mut self) -> Option<io::Result<TcpStream>> {
-        let stream: io::Result<TcpStream> = self.listener.inner.accept().map(|p| p.0);
         let stream: io::Result<TcpStream> = self.listener.inner.accept().map(|p| p.0);
         let atomic_bool = &self.listener.is_canceled;
         if !atomic_bool.load(Ordering::Acquire) {
