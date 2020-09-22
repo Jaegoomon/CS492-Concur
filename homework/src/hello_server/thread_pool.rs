@@ -8,11 +8,6 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-enum Message {
-    NewJob(Job, Arc<(Mutex<usize>, Condvar)>),
-    Terminate,
-}
-
 trait FnBox {
     fn call_box(self: Box<Self>);
 }
@@ -23,7 +18,8 @@ impl<F: FnOnce()> FnBox for F {
     }
 }
 
-type Job = Box<dyn FnBox + Send + 'static>;
+//type Job = Box<dyn FnBox + Send + 'static>;
+struct Job(Box<dyn FnBox + Send + 'static>);
 
 #[derive(Debug)]
 struct Worker {
@@ -36,34 +32,24 @@ impl Drop for Worker {
     /// function should panic too.  NOTE: that the thread is detached if not `join`ed explicitly.
     fn drop(&mut self) {
         // join worker thread
-        // println!("[Worker {}] joined", self.id);
+        //println!("[Worker {}] joined", self.id);
 
         if let Some(thread) = self.thread.take() {
             match thread.join() {
                 Ok(v) => (),
-                Err(e) => (),
+                Err(e) => panic!(),
             }
         }
     }
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Receiver<Message>) -> Worker {
+    fn new(id: usize, receiver: Receiver<Job>) -> Worker {
         let thread = thread::spawn(move || loop {
-            let message = receiver.recv().unwrap();
-            match message {
-                Message::NewJob(job, pair) => {
-                    //println!("[Worker {}] starts a job.", id);
-                    job.call_box();
-                    let (lock, cvar) = &*pair;
-                    let mut data = lock.lock().unwrap();
-                    *data += 1;
-                    cvar.notify_one();
-                }
-                Message::Terminate => {
-                    //println!("[Worker {}] was terminating.", id);
-                    break;
-                }
+            let job = receiver.recv();
+            match job {
+                Ok(v) => (v.0).call_box(),
+                Err(e) => break,
             }
         });
 
@@ -118,7 +104,7 @@ impl ThreadPoolInner {
 #[derive(Debug)]
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    job_sender: Sender<Message>,
+    job_sender: Option<Sender<Job>>,
     pool_inner: Arc<ThreadPoolInner>,
 }
 
@@ -141,7 +127,7 @@ impl ThreadPool {
         }
         ThreadPool {
             workers: workers,
-            job_sender: job_sender,
+            job_sender: Some(job_sender),
             pool_inner: Arc::new(pool_inner),
         }
     }
@@ -151,20 +137,9 @@ impl ThreadPool {
     where
         F: FnOnce() + Send + 'static,
     {
-        let job = Box::new(f);
         self.pool_inner.start_job();
-
-        let pair = Arc::clone(&self.pool_inner.empty_condvar);
-        let pair2 = pair.clone();
-        self.job_sender.send(Message::NewJob(job, pair2)).unwrap();
-        let pool_inner = Arc::clone(&self.pool_inner);
-
-        thread::spawn(move || {
-            let (lock, cvar) = &*pair;
-            let data = lock.lock().unwrap();
-            cvar.wait(data);
-            pool_inner.finish_job();
-        });
+        let job = Job(Box::new(f));
+        self.job_sender.as_ref().unwrap().send(job).unwrap();
     }
 
     /// Block the current thread until all jobs in the pool have been executed.  NOTE: This method
@@ -180,11 +155,15 @@ impl Drop for ThreadPool {
     fn drop(&mut self) {
         //println!("Sending terminate message to all workers.");
         // sending terminate message
-        for _ in &mut self.workers {
-            self.job_sender.send(Message::Terminate).unwrap();
+        match self.job_sender.take() {
+            Some(sender) => {
+                for work in &self.workers {
+                    drop(work);
+                }
+            }
+            None => (),
         }
-        //println!("Shutting down workers.");
-        self.join()
+        //self.join();
     }
 }
 
