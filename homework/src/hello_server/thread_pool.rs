@@ -39,7 +39,10 @@ impl Drop for Worker {
         // println!("[Worker {}] joined", self.id);
 
         if let Some(thread) = self.thread.take() {
-            thread.join().unwrap();
+            match thread.join() {
+                Ok(v) => (),
+                Err(e) => (),
+            }
         }
     }
 }
@@ -75,7 +78,7 @@ impl Worker {
 /// closures via `Arc` so that the workers can report to the pool that it started/finished a job.
 #[derive(Debug, Default)]
 struct ThreadPoolInner {
-    job_count: Arc<(Mutex<usize>)>,
+    job_count: Arc<Mutex<usize>>,
     empty_condvar: Arc<(Mutex<usize>, Condvar)>,
 }
 
@@ -125,9 +128,9 @@ impl ThreadPool {
         assert!(size > 0);
         let (sender, receiver) = unbounded();
         let job_sender = sender;
-        let mut job_count = Arc::new(Mutex::new(0));
-        let mut empty_condvar = Arc::new((Mutex::new(0), Condvar::new()));
-        let mut pool_inner = ThreadPoolInner {
+        let job_count = Arc::new(Mutex::new(0));
+        let empty_condvar = Arc::new((Mutex::new(0), Condvar::new()));
+        let pool_inner = ThreadPoolInner {
             job_count,
             empty_condvar,
         };
@@ -156,9 +159,9 @@ impl ThreadPool {
         self.job_sender.send(Message::NewJob(job, pair2)).unwrap();
         let pool_inner = Arc::clone(&self.pool_inner);
 
-        let thread = thread::spawn(move || {
+        thread::spawn(move || {
             let (lock, cvar) = &*pair;
-            let mut data = lock.lock().unwrap();
+            let data = lock.lock().unwrap();
             cvar.wait(data);
             pool_inner.finish_job();
         });

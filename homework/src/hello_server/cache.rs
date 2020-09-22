@@ -30,29 +30,21 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
         let inner = Arc::clone(&self.inner);
 
         loop {
-            match self.inner.read().unwrap().get(&key) {
+            let mut inner = self.inner.write().unwrap();
+            match inner.get(&key) {
                 Some(lock) => {
                     if lock.load(Ordering::Acquire) {
-                        break;
+                        return self.hash.read().unwrap().get(&key).unwrap().clone();
                     }
                 }
-                None => break,
+                None => {
+                    inner.insert(key.clone(), AtomicBool::new(false));
+                    break;
+                }
             }
         }
-
-        match self.hash.read().unwrap().get(&key) {
-            Some(v) => return v.clone(),
-            None => (),
-        }
         {
-            inner
-                .write()
-                .unwrap()
-                .insert(key.clone(), AtomicBool::new(false));
-        }
-        println!("function executed!!");
-        let v1 = f(key.clone());
-        {
+            let v1 = f(key.clone());
             cache_data.write().unwrap().insert(key.clone(), v1.clone());
             inner
                 .write()
