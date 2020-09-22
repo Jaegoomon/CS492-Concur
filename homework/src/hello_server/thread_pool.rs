@@ -36,7 +36,7 @@ impl Drop for Worker {
     /// function should panic too.  NOTE: that the thread is detached if not `join`ed explicitly.
     fn drop(&mut self) {
         // join worker thread
-        println!("[Worker {}] joined", self.id);
+        // println!("[Worker {}] joined", self.id);
 
         if let Some(thread) = self.thread.take() {
             thread.join().unwrap();
@@ -50,7 +50,7 @@ impl Worker {
             let message = receiver.recv().unwrap();
             match message {
                 Message::NewJob(job, pair) => {
-                    println!("[Worker {}] starts a job.", id);
+                    //println!("[Worker {}] starts a job.", id);
                     job.call_box();
                     let (lock, cvar) = &*pair;
                     let mut data = lock.lock().unwrap();
@@ -58,7 +58,7 @@ impl Worker {
                     cvar.notify_one();
                 }
                 Message::Terminate => {
-                    println!("[Worker {}] was terminating.", id);
+                    //println!("[Worker {}] was terminating.", id);
                     break;
                 }
             }
@@ -85,7 +85,7 @@ impl ThreadPoolInner {
         let count = Arc::clone(&self.job_count);
         let mut data = count.lock().unwrap();
         *data += 1;
-        println!("[tpool] add (job count: {})", data);
+        //println!("[tpool] add (job count: {})", data);
     }
 
     /// Decrement the job count.
@@ -93,7 +93,7 @@ impl ThreadPoolInner {
         let count = Arc::clone(&self.job_count);
         let mut data = count.lock().unwrap();
         *data -= 1;
-        println!("[tpool] finish (job count: {})", data);
+        //println!("[tpool] finish (job count: {})", data);
     }
 
     /// Wait until the job count becomes 0.
@@ -101,9 +101,13 @@ impl ThreadPoolInner {
     /// NOTE: We can optimize this function by adding another field to `ThreadPoolInner`, but let's
     /// not care about that in this homework.
     fn wait_empty(&self) {
-        let count = Arc::clone(&self.job_count);
-        let mut data = count.lock().unwrap();
-        while *data != 0 {}
+        loop {
+            let count = Arc::clone(&self.job_count);
+            let data = count.lock().unwrap();
+            if *data == 0 {
+                break;
+            }
+        }
     }
 }
 
@@ -171,12 +175,12 @@ impl Drop for ThreadPool {
     /// When dropped, all worker threads' `JoinHandle` must be `join`ed. If the thread panicked,
     /// then this function should panic too.
     fn drop(&mut self) {
-        println!("Sending terminate message to all workers.");
+        //println!("Sending terminate message to all workers.");
         // sending terminate message
         for _ in &mut self.workers {
             self.job_sender.send(Message::Terminate).unwrap();
         }
-        println!("Shutting down workers.");
+        //println!("Shutting down workers.");
         self.join()
     }
 }

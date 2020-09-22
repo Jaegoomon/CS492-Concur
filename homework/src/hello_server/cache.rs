@@ -2,14 +2,15 @@
 
 use std::collections::hash_map::{Entry, HashMap};
 use std::hash::Hash;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Cache that remembers the result for each key.
 #[derive(Debug, Default)]
 pub struct Cache<K, V> {
     // todo! Build your own cache type.
-    hash: Mutex<HashMap<K, V>>,
-    inner: (),
+    hash: Arc<RwLock<HashMap<K, V>>>,
+    inner: Arc<RwLock<HashMap<K, AtomicBool>>>,
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
@@ -24,15 +25,40 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
     /// duplicate the work. That is, `f` should be run only once for each key. Specifically, even
     /// for the concurrent invocations of `get_or_insert_with(key, f)`, `f` is called only once.
     pub fn get_or_insert_with<F: FnOnce(K) -> V>(&self, key: K, f: F) -> V {
-        let mut cache_data = self.hash.lock().unwrap();
-        match cache_data.get_mut(&key) {
-            Some(v) => v.clone(),
-            None => {
-                let v = f(key.clone());
-                cache_data.insert(key, v.clone());
-                v
-            }
+        //let mut cache_data = self.hash.lock().unwrap();
+        let cache_data = Arc::clone(&self.hash);
+        let inner = Arc::clone(&self.inner);
+
+        match self.inner.read().unwrap().get(&key) {
+            Some(lock) => loop {
+                if lock.load(Ordering::Acquire) {
+                    break;
+                }
+            },
+            None => (),
         }
+
+        match cache_data.read().unwrap().get(&key) {
+            Some(v) => return v.clone(),
+            None => (),
+        }
+        {
+            inner
+                .write()
+                .unwrap()
+                .insert(key.clone(), AtomicBool::new(false));
+        }
+        let v1 = f(key.clone());
+        {
+            cache_data.write().unwrap().insert(key.clone(), v1.clone());
+            inner
+                .write()
+                .unwrap()
+                .get(&key)
+                .unwrap()
+                .store(true, Ordering::Release);
+        }
+        v1
     }
 }
 
