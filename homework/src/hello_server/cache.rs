@@ -29,16 +29,18 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
         let cache_data = Arc::clone(&self.hash);
         let inner = Arc::clone(&self.inner);
 
-        match self.inner.read().unwrap().get(&key) {
-            Some(lock) => loop {
-                if lock.load(Ordering::Acquire) {
-                    break;
+        loop {
+            match self.inner.read().unwrap().get(&key) {
+                Some(lock) => {
+                    if lock.load(Ordering::Acquire) {
+                        break;
+                    }
                 }
-            },
-            None => (),
+                None => break,
+            }
         }
 
-        match cache_data.read().unwrap().get(&key) {
+        match self.hash.read().unwrap().get(&key) {
             Some(v) => return v.clone(),
             None => (),
         }
@@ -48,6 +50,7 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
                 .unwrap()
                 .insert(key.clone(), AtomicBool::new(false));
         }
+        println!("function executed!!");
         let v1 = f(key.clone());
         {
             cache_data.write().unwrap().insert(key.clone(), v1.clone());
@@ -57,8 +60,8 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
                 .get(&key)
                 .unwrap()
                 .store(true, Ordering::Release);
+            v1
         }
-        v1
     }
 }
 
