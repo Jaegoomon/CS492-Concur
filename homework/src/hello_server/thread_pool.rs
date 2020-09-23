@@ -19,7 +19,7 @@ impl<F: FnOnce()> FnBox for F {
 }
 
 //type Job = Box<dyn FnBox + Send + 'static>;
-struct Job(Box<dyn FnBox + Send + 'static>);
+struct Job(Box<dyn FnBox + Send + 'static>, Arc<Mutex<usize>>);
 
 #[derive(Debug)]
 struct Worker {
@@ -32,13 +32,8 @@ impl Drop for Worker {
     /// function should panic too.  NOTE: that the thread is detached if not `join`ed explicitly.
     fn drop(&mut self) {
         // join worker thread
-        //println!("[Worker {}] joined", self.id);
-
         if let Some(thread) = self.thread.take() {
-            match thread.join() {
-                Ok(v) => (),
-                Err(e) => panic!(),
-            }
+            thread.join().unwrap()
         }
     }
 }
@@ -48,8 +43,14 @@ impl Worker {
         let thread = thread::spawn(move || loop {
             let job = receiver.recv();
             match job {
-                Ok(v) => (v.0).call_box(),
-                Err(e) => break,
+                Ok(v) => {
+                    (v.0).call_box();
+                    let mut data = (v.1).lock().unwrap();
+                    *data -= 1;
+                }
+                Err(e) => {
+                    break;
+                }
             }
         });
 
@@ -65,7 +66,6 @@ impl Worker {
 #[derive(Debug, Default)]
 struct ThreadPoolInner {
     job_count: Arc<Mutex<usize>>,
-    empty_condvar: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl ThreadPoolInner {
@@ -115,11 +115,7 @@ impl ThreadPool {
         let (sender, receiver) = unbounded();
         let job_sender = sender;
         let job_count = Arc::new(Mutex::new(0));
-        let empty_condvar = Arc::new((Mutex::new(0), Condvar::new()));
-        let pool_inner = ThreadPoolInner {
-            job_count,
-            empty_condvar,
-        };
+        let pool_inner = ThreadPoolInner { job_count };
         let mut workers = Vec::with_capacity(size);
 
         for id in 0..size {
@@ -137,8 +133,13 @@ impl ThreadPool {
     where
         F: FnOnce() + Send + 'static,
     {
-        self.pool_inner.start_job();
-        let job = Job(Box::new(f));
+        let pair = Arc::clone(&self.pool_inner.job_count);
+        let pair2 = pair.clone();
+        let job = Job(Box::new(f), pair2);
+        {
+            let mut data = pair.lock().unwrap();
+            *data += 1;
+        }
         self.job_sender.as_ref().unwrap().send(job).unwrap();
     }
 
@@ -153,8 +154,6 @@ impl Drop for ThreadPool {
     /// When dropped, all worker threads' `JoinHandle` must be `join`ed. If the thread panicked,
     /// then this function should panic too.
     fn drop(&mut self) {
-        //println!("Sending terminate message to all workers.");
-        // sending terminate message
         match self.job_sender.take() {
             Some(sender) => {
                 for work in &self.workers {
@@ -163,7 +162,6 @@ impl Drop for ThreadPool {
             }
             None => (),
         }
-        //self.join();
     }
 }
 
