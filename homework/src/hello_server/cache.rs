@@ -25,28 +25,33 @@ impl<K: Eq + Hash + Clone, V: Clone> Cache<K, V> {
     /// duplicate the work. That is, `f` should be run only once for each key. Specifically, even
     /// for the concurrent invocations of `get_or_insert_with(key, f)`, `f` is called only once.
     pub fn get_or_insert_with<F: FnOnce(K) -> V>(&self, key: K, f: F) -> V {
-        //let mut cache_data = self.hash.lock().unwrap();
-        let cache_data = Arc::clone(&self.hash);
-        let inner = Arc::clone(&self.inner);
-
+        //let cache_data = Arc::clone(&self.hash);
+        //let inner_data = Arc::clone(&self.inner);
+        match self.hash.read().unwrap().get(&key) {
+            Some(v) => return v.clone(),
+            None => (),
+        }
         loop {
-            let mut inner = inner.write().unwrap();
-            match inner.get(&key) {
-                Some(lock) => {
-                    if lock.load(Ordering::Acquire) {
-                        return cache_data.read().unwrap().get(&key).unwrap().clone();
-                    }
-                }
-                None => {
-                    inner.insert(key.clone(), AtomicBool::new(false));
-                    break;
-                }
+            if let Entry::Vacant(k) = self.inner.write().unwrap().entry(key.clone()) {
+                k.insert(AtomicBool::new(false));
+                break;
+            }
+
+            if self
+                .inner
+                .read()
+                .unwrap()
+                .get(&key)
+                .unwrap()
+                .load(Ordering::Acquire)
+            {
+                return self.hash.read().unwrap().get(&key).unwrap().clone();
             }
         }
         let v1 = f(key.clone());
         {
-            cache_data.write().unwrap().insert(key.clone(), v1.clone());
-            inner
+            self.hash.write().unwrap().insert(key.clone(), v1.clone());
+            self.inner
                 .write()
                 .unwrap()
                 .get(&key)
