@@ -723,7 +723,30 @@ impl<T> IterMut<'_, T> {
     /// ```
     #[inline]
     pub fn insert_next(&mut self, element: T) {
-        todo!()
+        //todo!()
+        let mut node = Box::new(Node::new(element));
+        unsafe {
+            node.next = self.head;
+            if self.head.is_null() {
+                node.prev = self.tail;
+            } else {
+                node.prev = (*self.head).prev;
+            }
+
+            let node = Box::into_raw(node);
+            if self.head.is_null() {
+                (*self.tail).next = node;
+                self.tail = node;
+            } else {
+                if (*self.head).prev.is_null() {
+                    (*self.list).head = node;
+                } else {
+                    (*(*self.head).prev).next = node;
+                }
+                (*self.head).prev = node;
+            }
+            (*self.list).len += 1;
+        }
     }
 
     /// Provides a reference to the next element, without changing the iterator.
