@@ -694,7 +694,15 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<&'a mut T> {
-        todo!()
+        if self.len == 0 {
+            None
+        } else {
+            unsafe { self.tail.as_mut() }.map(|node| {
+                self.len -= 1;
+                self.tail = node.prev;
+                &mut node.element
+            })
+        }
     }
 }
 
@@ -723,7 +731,6 @@ impl<T> IterMut<'_, T> {
     /// ```
     #[inline]
     pub fn insert_next(&mut self, element: T) {
-        //todo!()
         let mut node = Box::new(Node::new(element));
         unsafe {
             node.next = self.head;
@@ -766,7 +773,7 @@ impl<T> IterMut<'_, T> {
     /// ```
     #[inline]
     pub fn peek_next(&mut self) -> Option<&mut T> {
-        todo!()
+        unsafe { Some(&mut (*self.head).element) }
     }
 }
 
