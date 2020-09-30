@@ -266,7 +266,19 @@ impl<T> LinkedList<T> {
 
     /// Moves all elements from `other` to the begin of the list.
     pub fn prepend(&mut self, other: &mut Self) {
-        todo!()
+        if self.head.is_null() {
+            mem::swap(self, other);
+        } else {
+            let other_tail = mem::replace(&mut other.tail, ptr::null_mut());
+            if !other_tail.is_null() {
+                unsafe {
+                    (*self.head).prev = other_tail;
+                    (*other_tail).next = self.head;
+                }
+                self.head = mem::replace(&mut other.head, ptr::null_mut());
+                self.len += mem::replace(&mut other.len, 0);
+            }
+        }
     }
 
     /// Provides a forward iterator.
@@ -639,7 +651,15 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<&'a mut T> {
-        todo!()
+        if self.len == 0 {
+            None
+        } else {
+            unsafe { self.head.as_mut() }.map(|node| {
+                self.len -= 1;
+                self.head = node.next;
+                &mut node.element
+            })
+        }
     }
 }
 
