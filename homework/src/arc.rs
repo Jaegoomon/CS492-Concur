@@ -87,14 +87,28 @@ impl<T> Arc<T> {
     /// ```
     #[inline]
     pub fn get_mut(this: &mut Self) -> Option<&mut T> {
-        todo!()
+        // check count
+        unsafe {
+            if this.is_unique() {
+                Some(&mut (*this.ptr.as_ptr()).data)
+            } else {
+                None
+            }
+        }
     }
 
     // Used in `get_mut` and `make_mut` to check if the given `Arc` is the unique reference to the
     // underlying data.
     #[inline]
     fn is_unique(&mut self) -> bool {
-        todo!()
+        // check count
+        unsafe {
+            if (*self.ptr.as_ptr()).count.load(Ordering::Acquire) == 1 {
+                true
+            } else {
+                false
+            }
+        }
     }
 
     /// Returns a mutable reference into the given `Arc` without any check.
@@ -145,7 +159,7 @@ impl<T> Arc<T> {
     /// ```
     #[inline]
     pub fn count(this: &Self) -> usize {
-        todo!()
+        unsafe { (*this.ptr.as_ptr()).count.load(Ordering::Acquire) }
     }
 
     #[inline]
@@ -228,7 +242,14 @@ impl<T: Clone> Arc<T> {
     /// ```
     #[inline]
     pub fn make_mut(this: &mut Self) -> &mut T {
-        todo!()
+        unsafe {
+            if this.is_unique() {
+                Self::get_mut_unchecked(this)
+            } else {
+                *this = Self::new(Self::get_mut_unchecked(this).clone());
+                Self::get_mut_unchecked(this)
+            }
+        }
     }
 }
 
@@ -253,7 +274,12 @@ impl<T> Clone for Arc<T> {
     /// ```
     #[inline]
     fn clone(&self) -> Arc<T> {
-        todo!()
+        // increasing reference counter
+        unsafe {
+            (*self.ptr.as_ptr()).count.fetch_add(1, Ordering::Relaxed);
+        }
+        // cloning the reference
+        Self::from_inner(self.ptr)
     }
 }
 
@@ -292,7 +318,13 @@ impl<T> Drop for Arc<T> {
     /// drop(foo2);   // Prints "dropped!"
     /// ```
     fn drop(&mut self) {
-        todo!()
+        // check count
+        unsafe {
+            (*self.ptr.as_ptr()).count.fetch_sub(1, Ordering::Release);
+            if (*self.ptr.as_ptr()).count.load(Ordering::Acquire) == 0 {
+                drop(self);
+            }
+        }
     }
 }
 
