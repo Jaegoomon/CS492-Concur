@@ -210,7 +210,15 @@ impl<T> Arc<T> {
     /// ```
     #[inline]
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
-        todo!()
+        unsafe {
+            if (*this.ptr.as_ptr()).count.load(Ordering::Acquire) == 1 {
+                let data = std::ptr::read(&this.ptr.as_ref().data);
+                //mem::forget(this);
+                Ok(data)
+            } else {
+                Err(this)
+            }
+        }
     }
 }
 
@@ -246,6 +254,7 @@ impl<T: Clone> Arc<T> {
             if this.is_unique() {
                 Self::get_mut_unchecked(this)
             } else {
+                //(*this.ptr.as_ptr()).count.fetch_sub(1, Ordering::Release);
                 *this = Self::new(Self::get_mut_unchecked(this).clone());
                 Self::get_mut_unchecked(this)
             }
@@ -320,9 +329,9 @@ impl<T> Drop for Arc<T> {
     fn drop(&mut self) {
         // check count
         unsafe {
-            (*self.ptr.as_ptr()).count.fetch_sub(1, Ordering::Release);
-            if (*self.ptr.as_ptr()).count.load(Ordering::Acquire) == 0 {
-                drop(self);
+            if (*self.ptr.as_ptr()).count.fetch_sub(1, Ordering::Release) == 1 {
+                let data = Box::from_raw(self.ptr.as_ptr());
+                drop(data);
             }
         }
     }
