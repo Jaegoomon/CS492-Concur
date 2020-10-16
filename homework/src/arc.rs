@@ -212,8 +212,9 @@ impl<T> Arc<T> {
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
         unsafe {
             if (*this.ptr.as_ptr()).count.load(Ordering::Acquire) == 1 {
-                let data = std::ptr::read(&this.ptr.as_ref().data);
-                //mem::forget(this);
+                let data = Box::from_raw(this.ptr.as_ptr()).data;
+                //let data = std::ptr::read(&this.ptr.as_ref().data);
+                mem::forget(this);
                 Ok(data)
             } else {
                 Err(this)
