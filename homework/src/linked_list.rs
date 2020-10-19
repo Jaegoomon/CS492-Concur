@@ -744,6 +744,7 @@ impl<T> IterMut<'_, T> {
             if self.head.is_null() {
                 (*self.tail).next = node;
                 self.tail = node;
+                (*self.list).tail = node;
             } else {
                 if (*self.head).prev.is_null() {
                     (*self.list).head = node;
@@ -752,6 +753,7 @@ impl<T> IterMut<'_, T> {
                 }
                 (*self.head).prev = node;
             }
+            // increase the length of linked list
             (*self.list).len += 1;
         }
     }

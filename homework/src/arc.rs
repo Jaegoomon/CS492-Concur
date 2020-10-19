@@ -106,12 +106,10 @@ impl<T> Arc<T> {
     #[inline]
     fn is_unique(&mut self) -> bool {
         // check count
-        unsafe {
-            if (*self.ptr.as_ptr()).count.load(Ordering::Acquire) == 1 {
-                true
-            } else {
-                false
-            }
+        if Arc::count(self) == 1 {
+            true
+        } else {
+            false
         }
     }
 
@@ -215,7 +213,7 @@ impl<T> Arc<T> {
     #[inline]
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
         unsafe {
-            if (*this.ptr.as_ptr()).count.load(Ordering::Acquire) == 1 {
+            if Arc::count(&this) == 1 {
                 let data = Box::from_raw(this.ptr.as_ptr()).data;
                 //let data = std::ptr::read(&this.ptr.as_ref().data);
                 mem::forget(this);
@@ -256,13 +254,12 @@ impl<T: Clone> Arc<T> {
     #[inline]
     pub fn make_mut(this: &mut Self) -> &mut T {
         unsafe {
-            if this.is_unique() {
-                Self::get_mut_unchecked(this)
-            } else {
+            if !this.is_unique() {
+                drop(&this);
                 //(*this.ptr.as_ptr()).count.fetch_sub(1, Ordering::Release);
-                *this = Self::new(Self::get_mut_unchecked(this).clone());
-                Self::get_mut_unchecked(this)
+                *this = Arc::new(Self::get_mut_unchecked(this).clone());
             }
+            Self::get_mut_unchecked(this)
         }
     }
 }
@@ -290,7 +287,7 @@ impl<T> Clone for Arc<T> {
     fn clone(&self) -> Arc<T> {
         // increasing reference counter
         unsafe {
-            (*self.ptr.as_ptr()).count.fetch_add(1, Ordering::Relaxed);
+            (*self.ptr.as_ptr()).count.fetch_add(1, Ordering::Acquire);
         }
         // cloning the reference
         Self::from_inner(self.ptr)
@@ -334,9 +331,8 @@ impl<T> Drop for Arc<T> {
     fn drop(&mut self) {
         // check count
         unsafe {
-            if (*self.ptr.as_ptr()).count.fetch_sub(1, Ordering::Release) == 1 {
-                let data = Box::from_raw(self.ptr.as_ptr());
-                drop(data);
+            if (*self.ptr.as_ptr()).count.fetch_sub(1, Ordering::AcqRel) == 1 {
+                drop(Box::from_raw(self.ptr.as_ptr()));
             }
         }
     }
