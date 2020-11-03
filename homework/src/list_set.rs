@@ -37,7 +37,20 @@ impl<'l, T: Ord> Cursor<'l, T> {
     /// Move the cursor to the position of key in the sorted list. If the key is found in the list,
     /// return `true`.
     fn find(&mut self, key: &T) -> bool {
-        todo!()
+        loop {
+            if (*self.0).is_null() {
+                return false;
+            } else {
+                unsafe {
+                    if *key == (*(*self.0)).data {
+                        return true;
+                    } else {
+                        let next = (*(*self.0)).next.lock().unwrap();
+                        self.0 = next;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -52,17 +65,33 @@ impl<T> OrderedListSet<T> {
 
 impl<T: Ord> OrderedListSet<T> {
     fn find(&self, key: &T) -> (bool, Cursor<T>) {
-        todo!()
+        let mut cursor = Cursor(self.head.lock().unwrap());
+        (cursor.find(key), cursor)
     }
 
     /// Returns `true` if the set contains the key.
     pub fn contains(&self, key: &T) -> bool {
-        todo!()
+        let (is_key, cursor) = self.find(key);
+        is_key
     }
-
     /// Insert a key to the set. If the set already has the key, return the provided key in `Err`.
     pub fn insert(&self, key: T) -> Result<(), T> {
-        todo!()
+        {
+            let (is_key, cursor) = self.find(&key);
+            if is_key {
+                return Err(key);
+            }
+        }
+        let mut start = self.head.lock().unwrap();
+        if (*start).is_null() {
+            let node = Node::new(key, ptr::null_mut());
+            *start = node;
+            return Ok(());
+        } else {
+            let node = Node::new(key, *start);
+            *start = node;
+            Ok(())
+        }
     }
 
     /// Remove the key from the set and return it.
@@ -85,7 +114,20 @@ impl<'l, T> Iterator for Iter<'l, T> {
     type Item = &'l T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        match self.0.as_mut() {
+            Some(guard) => {
+                if (**guard).is_null() {
+                    return None;
+                } else {
+                    unsafe {
+                        let data = &(***guard).data;
+                        *guard = (***guard).next.lock().unwrap();
+                        Some(&data)
+                    }
+                }
+            }
+            None => None,
+        }
     }
 }
 
