@@ -82,15 +82,37 @@ impl<T: Ord> OrderedListSet<T> {
                 return Err(key);
             }
         }
+
         let mut start = self.head.lock().unwrap();
-        if (*start).is_null() {
-            let node = Node::new(key, ptr::null_mut());
-            *start = node;
-            return Ok(());
-        } else {
-            let node = Node::new(key, *start);
-            *start = node;
-            Ok(())
+        let node = Node::new(key, ptr::null_mut());
+        let node_data = unsafe { Box::from_raw(node) };
+        loop {
+            if (*start).is_null() {
+                *start = node;
+                return Ok(());
+            } else {
+                let curr = unsafe { Box::from_raw(*start) };
+                if node_data.data < curr.data {
+                    *node_data.next.lock().unwrap() = *start;
+                    *start = node;
+                    return Ok(());
+                } else {
+                    let mut next = curr.next.lock().unwrap();
+                    if (*next).is_null() {
+                        *next = node;
+                        return Ok(());
+                    } else {
+                        let next_node = unsafe { Box::from_raw(*next) };
+                        if node_data.data > next_node.data {
+                            *node_data.next.lock().unwrap() = *next;
+                            *start = node;
+                            return Ok(());
+                        } else {
+                            *start = *next;
+                        }
+                    }
+                }
+            }
         }
     }
 
