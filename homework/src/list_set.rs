@@ -37,20 +37,16 @@ impl<'l, T: Ord> Cursor<'l, T> {
     /// Move the cursor to the position of key in the sorted list. If the key is found in the list,
     /// return `true`.
     fn find(&mut self, key: &T) -> bool {
-        loop {
-            if (*self.0).is_null() {
-                return false;
-            } else {
-                unsafe {
-                    if *key == (*(*self.0)).data {
-                        return true;
-                    } else {
-                        let next = (*(*self.0)).next.lock().unwrap();
-                        self.0 = next;
-                    }
+        while !(*self.0).is_null() {
+            unsafe {
+                if *key == (**self.0).data {
+                    return true;
                 }
+                let next = (**self.0).next.lock().unwrap();
+                self.0 = next;
             }
         }
+        false
     }
 }
 
@@ -71,54 +67,64 @@ impl<T: Ord> OrderedListSet<T> {
 
     /// Returns `true` if the set contains the key.
     pub fn contains(&self, key: &T) -> bool {
-        let (is_key, cursor) = self.find(key);
-        is_key
+        Cursor(self.head.lock().unwrap()).find(key)
     }
     /// Insert a key to the set. If the set already has the key, return the provided key in `Err`.
     pub fn insert(&self, key: T) -> Result<(), T> {
         {
-            let (is_key, cursor) = self.find(&key);
-            if is_key {
+            if Cursor(self.head.lock().unwrap()).find(&key) {
                 return Err(key);
             }
         }
 
-        let mut start = self.head.lock().unwrap();
-        let node = Node::new(key, ptr::null_mut());
-        let node_data = unsafe { Box::from_raw(node) };
-        loop {
-            if (*start).is_null() {
-                *start = node;
+        let mut cursor = Cursor(self.head.lock().unwrap());
+        unsafe {
+            if (*cursor.0).is_null() || (**cursor.0).data > key {
+                let node = Node::new(key, *cursor.0);
+                *cursor.0 = node;
                 return Ok(());
-            } else {
-                let curr = unsafe { Box::from_raw(*start) };
-                if node_data.data < curr.data {
-                    *node_data.next.lock().unwrap() = *start;
-                    *start = node;
+            }
+            loop {
+                let mut next = Cursor((**cursor.0).next.lock().unwrap());
+
+                if (*next.0).is_null() || (**next.0).data > key {
+                    let node = Node::new(key, *next.0);
+                    *next.0 = node;
                     return Ok(());
-                } else {
-                    let mut next = curr.next.lock().unwrap();
-                    if (*next).is_null() {
-                        *next = node;
-                        return Ok(());
-                    } else {
-                        let next_node = unsafe { Box::from_raw(*next) };
-                        if node_data.data > next_node.data {
-                            *node_data.next.lock().unwrap() = *next;
-                            *start = node;
-                            return Ok(());
-                        } else {
-                            *start = *next;
-                        }
-                    }
                 }
+                drop(cursor);
+                cursor = next;
             }
         }
     }
 
     /// Remove the key from the set and return it.
     pub fn remove(&self, key: &T) -> Result<T, ()> {
-        todo!()
+        {
+            if !Cursor(self.head.lock().unwrap()).find(&key) {
+                return Err(());
+            }
+        }
+
+        let mut cursor = Cursor(self.head.lock().unwrap());
+        unsafe {
+            if (**cursor.0).data == *key {
+                let data = Box::from_raw(*cursor.0).data;
+                *cursor.0 = *(**cursor.0).next.lock().unwrap();
+                return Ok(data);
+            }
+            loop {
+                let mut next = Cursor((**cursor.0).next.lock().unwrap());
+                if (**next.0).data == *key {
+                    let data = Box::from_raw(*next.0).data;
+                    let target = (**next.0).next.lock().unwrap();
+                    *next.0 = *target;
+                    return Ok(data);
+                }
+                drop(cursor);
+                cursor = next;
+            }
+        }
     }
 }
 
@@ -136,26 +142,33 @@ impl<'l, T> Iterator for Iter<'l, T> {
     type Item = &'l T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.0.as_mut() {
-            Some(guard) => {
-                if (**guard).is_null() {
-                    return None;
-                } else {
-                    unsafe {
-                        let data = &(***guard).data;
-                        *guard = (***guard).next.lock().unwrap();
-                        Some(&data)
+        loop {
+            match self.0.as_mut() {
+                Some(guard) => {
+                    if (**guard).is_null() {
+                        return None;
+                    } else {
+                        unsafe {
+                            let data = &(***guard).data;
+                            match (***guard).next.try_lock() {
+                                Ok(g) => {
+                                    self.0 = Some(g);
+                                    return Some(data);
+                                }
+                                Err(_) => return None,
+                            }
+                        }
                     }
                 }
+                None => continue,
             }
-            None => None,
         }
     }
 }
 
 impl<T> Drop for OrderedListSet<T> {
     fn drop(&mut self) {
-        todo!()
+        drop(self)
     }
 }
 
