@@ -110,6 +110,7 @@ impl<T: Ord> OrderedListSet<T> {
             let data = Box::from_raw(*cursor.0);
             loop {
                 if let Ok(guard) = data.next.try_lock() {
+                    //drop(*cursor.0);
                     *cursor.0 = *guard;
                     return Ok(data.data);
                 }
@@ -132,27 +133,23 @@ impl<'l, T> Iterator for Iter<'l, T> {
     type Item = &'l T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            match self.0.as_mut() {
-                Some(guard) => {
-                    if (**guard).is_null() {
-                        return None;
-                    } else {
-                        unsafe {
-                            let data = &(***guard).data;
-                            match (***guard).next.try_lock() {
-                                Ok(g) => {
-                                    self.0 = Some(g);
-                                    return Some(data);
-                                }
-                                Err(_) => return None,
-                            }
+        if let Some(guard) = self.0.as_mut() {
+            if (**guard).is_null() {
+                self.0 = None;
+                return None;
+            } else {
+                unsafe {
+                    let data = &(***guard).data;
+                    loop {
+                        if let Ok(g) = (***guard).next.try_lock() {
+                            self.0 = Some(g);
+                            return Some(data);
                         }
                     }
                 }
-                None => continue,
             }
         }
+        None
     }
 }
 
