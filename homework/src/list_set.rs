@@ -110,7 +110,7 @@ impl<T: Ord> OrderedListSet<T> {
             let data = Box::from_raw(*cursor.0);
             loop {
                 if let Ok(guard) = data.next.try_lock() {
-                    //drop(*cursor.0);
+                    drop(*cursor.0);
                     *cursor.0 = *guard;
                     return Ok(data.data);
                 }
@@ -155,7 +155,18 @@ impl<'l, T> Iterator for Iter<'l, T> {
 
 impl<T> Drop for OrderedListSet<T> {
     fn drop(&mut self) {
-        drop(self)
+        unsafe {
+            loop {
+                let start = self.head.get_mut().unwrap();
+                if (*start).is_null() {
+                    break;
+                }
+                let next = Box::from_raw(*start).next.into_inner().unwrap();
+                let garbage = *start;
+                *start = next;
+                drop(garbage);
+            }
+        }
     }
 }
 
