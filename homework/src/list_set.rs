@@ -76,10 +76,8 @@ impl<T: Ord> OrderedListSet<T> {
     }
     /// Insert a key to the set. If the set already has the key, return the provided key in `Err`.
     pub fn insert(&self, key: T) -> Result<(), T> {
-        {
-            if self.contains(&key) {
-                return Err(key);
-            }
+        if self.contains(&key) {
+            return Err(key);
         }
         loop {
             if let Ok(guard) = self.head.try_lock() {
@@ -162,8 +160,7 @@ impl<T> Drop for OrderedListSet<T> {
                     break;
                 }
                 let next = Box::from_raw(*start).next.into_inner().unwrap();
-                let garbage = *start;
-                *start = next;
+                let garbage = std::mem::replace(start, next);
                 drop(garbage);
             }
         }
