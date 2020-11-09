@@ -41,6 +41,8 @@ impl<'l, T: Ord> Cursor<'l, T> {
             unsafe {
                 if *key == (**self.0).data {
                     return true;
+                } else if *key < (**self.0).data {
+                    return false;
                 }
                 if let Ok(next) = (**self.0).next.try_lock() {
                     self.0 = next;
@@ -76,26 +78,13 @@ impl<T: Ord> OrderedListSet<T> {
     }
     /// Insert a key to the set. If the set already has the key, return the provided key in `Err`.
     pub fn insert(&self, key: T) -> Result<(), T> {
-        if self.contains(&key) {
+        let (is_key, mut cursor) = self.find(&key);
+        if is_key {
             return Err(key);
         }
-        loop {
-            if let Ok(guard) = self.head.try_lock() {
-                unsafe {
-                    let mut cursor = guard;
-                    loop {
-                        if (*cursor).is_null() || key < (**cursor).data {
-                            let node = Node::new(key, *cursor);
-                            *cursor = node;
-                            return Ok(());
-                        }
-                        if let Ok(next) = (**cursor).next.try_lock() {
-                            cursor = next;
-                        }
-                    }
-                }
-            }
-        }
+        let node = Node::new(key, *cursor.0);
+        *cursor.0 = node;
+        return Ok(());
     }
 
     /// Remove the key from the set and return it.
@@ -104,14 +93,12 @@ impl<T: Ord> OrderedListSet<T> {
         if !is_key {
             return Err(());
         }
-        unsafe {
-            let data = Box::from_raw(*cursor.0);
-            loop {
-                if let Ok(guard) = data.next.try_lock() {
-                    drop(*cursor.0);
-                    *cursor.0 = *guard;
-                    return Ok(data.data);
-                }
+        let data = unsafe { Box::from_raw(*cursor.0) };
+        loop {
+            if let Ok(guard) = data.next.try_lock() {
+                drop(*cursor.0);
+                *cursor.0 = *guard;
+                return Ok(data.data);
             }
         }
     }
@@ -153,16 +140,14 @@ impl<'l, T> Iterator for Iter<'l, T> {
 
 impl<T> Drop for OrderedListSet<T> {
     fn drop(&mut self) {
-        unsafe {
-            loop {
-                let start = self.head.get_mut().unwrap();
-                if (*start).is_null() {
-                    break;
-                }
-                let next = Box::from_raw(*start).next.into_inner().unwrap();
-                let garbage = std::mem::replace(start, next);
-                drop(garbage);
+        loop {
+            let start = self.head.get_mut().unwrap();
+            if (*start).is_null() {
+                break;
             }
+            let next = unsafe { Box::from_raw(*start).next.into_inner().unwrap() };
+            let garbage = std::mem::replace(start, next);
+            drop(garbage);
         }
     }
 }
