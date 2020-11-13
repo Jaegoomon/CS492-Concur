@@ -195,6 +195,40 @@ impl<T> GrowableArray<T> {
     /// Returns the reference to the `Atomic` pointer at `index`. Allocates new segments if
     /// necessary.
     pub fn get(&self, mut index: usize, guard: &Guard) -> &Atomic<T> {
+        // check if root is null_ptr
+        if self.root.load(Ordering::Acquire, guard).is_null() {
+            // allocate new segment
+            let new_seg = Owned::new(Segment::new());
+            self.root.store(new_seg, Ordering::Release);
+            // represent the tag
+            self.root.load(Ordering::Acquire, guard).with_tag(1);
+        }
+        // check the segment range can hold the index
+        let h = get_height(index, SEGMENT_LOGSIZE);
+        let root = self.root.load(Ordering::Acquire, guard).tag();
+        if h <= root {
+            let mut diff = h - root;
+            while diff > 0 {
+                let mut new_seg = Owned::new(Segment::new());
+                let r = self.root.load(Ordering::Acquire, guard);
+                new_seg[0] = AtomicUsize::new(r.into_usize());
+                self.root.store(new_seg, Ordering::Release);
+                self.root
+                    .load(Ordering::Acquire, guard)
+                    .with_tag(r.tag() + 1);
+                diff -= 1;
+            }
+        }
+        // if not, allocate new segment
         todo!()
     }
+}
+
+fn get_height(mut index: usize, capacity: usize) -> usize {
+    let mut h = 0;
+    while index > 0 {
+        index = index >> capacity;
+        h += 1;
+    }
+    h
 }
