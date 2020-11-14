@@ -173,7 +173,8 @@ impl Debug for Segment {
 impl<T> Drop for GrowableArray<T> {
     /// Deallocate segments, but not the individual elements.
     fn drop(&mut self) {
-        todo!()
+        drop(self);
+        //todo!()
     }
 }
 
@@ -199,28 +200,44 @@ impl<T> GrowableArray<T> {
         if self.root.load(Ordering::Acquire, guard).is_null() {
             // allocate new segment
             let new_seg = Owned::new(Segment::new());
-            self.root.store(new_seg, Ordering::Release);
-            // represent the tag
-            self.root.load(Ordering::Acquire, guard).with_tag(1);
+            self.root.store(new_seg.with_tag(1), Ordering::Release);
         }
+
         // check the segment range can hold the index
-        let h = get_height(index, SEGMENT_LOGSIZE);
-        let root = self.root.load(Ordering::Acquire, guard).tag();
-        if h <= root {
-            let mut diff = h - root;
-            while diff > 0 {
-                let mut new_seg = Owned::new(Segment::new());
-                let r = self.root.load(Ordering::Acquire, guard);
-                new_seg[0] = AtomicUsize::new(r.into_usize());
-                self.root.store(new_seg, Ordering::Release);
-                self.root
-                    .load(Ordering::Acquire, guard)
-                    .with_tag(r.tag() + 1);
-                diff -= 1;
+        let mut h = get_height(index, SEGMENT_LOGSIZE);
+        let h_array = self.root.load(Ordering::Acquire, guard).tag();
+
+        let mut diff = h - h_array;
+        while diff > 0 {
+            let mut parent = Owned::new(Segment::new());
+            let child = self.root.load(Ordering::Acquire, guard);
+            parent[0] = AtomicUsize::new(child.into_usize());
+            self.root
+                .store(parent.with_tag(child.tag() + 1), Ordering::Release);
+            diff -= 1;
+        }
+
+        // traversing
+        let mut something = self.root.load(Ordering::Acquire, guard);
+        loop {
+            // there is no space for index
+            let position = (index >> SEGMENT_LOGSIZE * (h - 1)) & 7;
+            if let Some(target) = unsafe { something.deref() }.get(position) {
+                // checking heigt
+                if h == 1 {
+                    return unsafe { &*(target as *const _ as *const Atomic<T>) };
+                }
+                let t = target.load(Ordering::Acquire);
+                if t == 0 {
+                    let aux = Owned::new(Segment::new());
+                    target.store(aux.into_usize(), Ordering::Release);
+                    continue;
+                }
+
+                something = unsafe { Shared::<Segment>::from_usize(t) };
+                h -= 1;
             }
         }
-        // if not, allocate new segment
-        todo!()
     }
 }
 
