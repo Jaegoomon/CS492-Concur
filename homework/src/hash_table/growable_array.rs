@@ -173,8 +173,12 @@ impl Debug for Segment {
 impl<T> Drop for GrowableArray<T> {
     /// Deallocate segments, but not the individual elements.
     fn drop(&mut self) {
-        drop(self);
-        //todo!()
+        //get the tag
+        let guard = unsafe { &unprotected() };
+        let seg = self.root.load(Ordering::Acquire, guard);
+        let t = seg.tag();
+        drop_garbage(seg, t);
+        //drop(self);
     }
 }
 
@@ -259,4 +263,23 @@ fn get_height(mut index: usize, capacity: usize) -> usize {
         h += 1;
     }
     h
+}
+
+fn drop_garbage(seg: Shared<Segment>, height: usize) -> () {
+    if height == 0 {
+        return;
+    }
+
+    unsafe {
+        let sega = seg.deref();
+        for i in 0..(1 << SEGMENT_LOGSIZE) {
+            let a = sega.get_unchecked(i);
+            let b = a.load(Ordering::Relaxed);
+            let something = Shared::<Segment>::from_usize(b);
+            if !something.is_null() {
+                drop_garbage(something, height - 1);
+            }
+        }
+        drop(seg.into_owned());
+    }
 }
