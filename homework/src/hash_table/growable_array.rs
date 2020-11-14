@@ -197,36 +197,43 @@ impl<T> GrowableArray<T> {
     /// necessary.
     pub fn get(&self, mut index: usize, guard: &Guard) -> &Atomic<T> {
         // check if root is null_ptr
-        if self.root.load(Ordering::Acquire, guard).is_null() {
+        let root = self.root.load(Ordering::Acquire, guard);
+        if root.is_null() {
             // allocate new segment
             let new_seg = Owned::new(Segment::new());
-            self.root.store(new_seg.with_tag(1), Ordering::Release);
+            self.root
+                .compare_and_set(root, new_seg.with_tag(1), Ordering::Release, guard)
+                .map_err(|_| ());
         }
 
         // check the segment range can hold the index
         let mut h = get_height(index, SEGMENT_LOGSIZE);
         let h_array = self.root.load(Ordering::Acquire, guard).tag();
 
-        let mut diff = h - h_array;
-        while diff > 0 {
-            let mut parent = Owned::new(Segment::new());
-            let child = self.root.load(Ordering::Acquire, guard);
-            parent[0] = AtomicUsize::new(child.into_usize());
-            self.root
-                .store(parent.with_tag(child.tag() + 1), Ordering::Release);
-            diff -= 1;
+        if h > h_array {
+            let mut diff = h - h_array;
+            while diff > 0 {
+                let mut parent = Owned::new(Segment::new());
+                let child = self.root.load(Ordering::Acquire, guard);
+                parent[0] = AtomicUsize::new(child.into_usize());
+                self.root
+                    .store(parent.with_tag(child.tag() + 1), Ordering::Release);
+                diff -= 1;
+            }
         }
 
         // traversing
         let mut something = self.root.load(Ordering::Acquire, guard);
+        h = something.tag();
         loop {
             // there is no space for index
-            let position = (index >> SEGMENT_LOGSIZE * (h - 1)) & 7;
+            let position = (index >> (SEGMENT_LOGSIZE * (h - 1))) & ((1 << SEGMENT_LOGSIZE) - 1);
             if let Some(target) = unsafe { something.deref() }.get(position) {
                 // checking heigt
                 if h == 1 {
                     return unsafe { &*(target as *const _ as *const Atomic<T>) };
                 }
+
                 let t = target.load(Ordering::Acquire);
                 if t == 0 {
                     let aux = Owned::new(Segment::new());
