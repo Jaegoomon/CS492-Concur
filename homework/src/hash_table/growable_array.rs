@@ -202,35 +202,39 @@ impl<T> GrowableArray<T> {
             // allocate new segment
             let new_seg = Owned::new(Segment::new());
             self.root
-                .compare_and_set(root, new_seg.with_tag(1), Ordering::Release, guard)
-                .map_err(|_| ());
+                .compare_and_set(root, new_seg.with_tag(1), Ordering::Release, guard);
         }
 
         // check the segment range can hold the index
         let mut h = get_height(index, SEGMENT_LOGSIZE);
-        let h_array = self.root.load(Ordering::Acquire, guard).tag();
-
-        if h > h_array {
-            let mut diff = h - h_array;
-            while diff > 0 {
+        loop {
+            let h_array = self.root.load(Ordering::Acquire, guard).tag();
+            if h > h_array {
                 let mut parent = Owned::new(Segment::new());
                 let child = self.root.load(Ordering::Acquire, guard);
                 parent[0] = AtomicUsize::new(child.into_usize());
-                self.root
-                    .store(parent.with_tag(child.tag() + 1), Ordering::Release);
-                diff -= 1;
+
+                // CAS with root and parent Segment
+                self.root.compare_and_set(
+                    child,
+                    parent.with_tag(child.tag() + 1),
+                    Ordering::Release,
+                    guard,
+                );
+            } else {
+                break;
             }
         }
 
         // traversing
         let mut something = self.root.load(Ordering::Acquire, guard);
-        h = something.tag();
+        let mut th = something.tag();
         loop {
             // there is no space for index
-            let position = (index >> (SEGMENT_LOGSIZE * (h - 1))) & ((1 << SEGMENT_LOGSIZE) - 1);
+            let position = (index >> (SEGMENT_LOGSIZE * (th - 1))) & ((1 << SEGMENT_LOGSIZE) - 1);
             if let Some(target) = unsafe { something.deref() }.get(position) {
                 // checking heigt
-                if h == 1 {
+                if th == 1 {
                     return unsafe { &*(target as *const _ as *const Atomic<T>) };
                 }
 
@@ -242,7 +246,7 @@ impl<T> GrowableArray<T> {
                 }
 
                 something = unsafe { Shared::<Segment>::from_usize(t) };
-                h -= 1;
+                th -= 1;
             }
         }
     }
