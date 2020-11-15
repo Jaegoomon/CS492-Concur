@@ -175,10 +175,9 @@ impl<T> Drop for GrowableArray<T> {
     fn drop(&mut self) {
         //get the tag
         let guard = unsafe { &unprotected() };
-        let seg = self.root.load(Ordering::Acquire, guard);
+        let seg = self.root.load(Ordering::Relaxed, guard);
         let t = seg.tag();
         drop_garbage(seg, t);
-        //drop(self);
     }
 }
 
@@ -204,27 +203,37 @@ impl<T> GrowableArray<T> {
         let root = self.root.load(Ordering::Acquire, guard);
         if root.is_null() {
             // allocate new segment
-            let new_seg = Owned::new(Segment::new());
-            self.root
-                .compare_and_set(root, new_seg.with_tag(1), Ordering::Release, guard);
+            let new_seg = Owned::new(Segment::new()).with_tag(1);
+            let new_seg = new_seg.into_shared(guard);
+
+            // CAS with root and new Segment
+            if self
+                .root
+                .compare_and_set(root, new_seg, Ordering::Release, guard)
+                .is_err()
+            {
+                unsafe { drop(new_seg.into_owned()) };
+            }
         }
 
         // check the segment range can hold the index
-        let mut h = get_height(index, SEGMENT_LOGSIZE);
+        let h = get_height(index, SEGMENT_LOGSIZE);
         loop {
             let h_array = self.root.load(Ordering::Acquire, guard).tag();
             if h > h_array {
-                let mut parent = Owned::new(Segment::new());
                 let child = self.root.load(Ordering::Acquire, guard);
-                parent[0] = AtomicUsize::new(child.into_usize());
+                let parent = Owned::new(Segment::new()).with_tag(child.tag() + 1);
+                parent[0].store(child.into_usize(), Ordering::Release);
 
                 // CAS with root and parent Segment
-                self.root.compare_and_set(
-                    child,
-                    parent.with_tag(child.tag() + 1),
-                    Ordering::Release,
-                    guard,
-                );
+                let parent = parent.into_shared(guard);
+                if self
+                    .root
+                    .compare_and_set(child, parent, Ordering::Release, guard)
+                    .is_err()
+                {
+                    unsafe { drop(parent.into_owned()) };
+                }
             } else {
                 break;
             }
@@ -234,7 +243,6 @@ impl<T> GrowableArray<T> {
         let mut something = self.root.load(Ordering::Acquire, guard);
         let mut th = something.tag();
         loop {
-            // there is no space for index
             let position = (index >> (SEGMENT_LOGSIZE * (th - 1))) & ((1 << SEGMENT_LOGSIZE) - 1);
             if let Some(target) = unsafe { something.deref() }.get(position) {
                 // checking heigt
@@ -245,7 +253,8 @@ impl<T> GrowableArray<T> {
                 let t = target.load(Ordering::Acquire);
                 if t == 0 {
                     let aux = Owned::new(Segment::new());
-                    target.store(aux.into_usize(), Ordering::Release);
+                    target.compare_and_swap(0, aux.into_usize(), Ordering::Release);
+                    // if failure drop aux
                     continue;
                 }
 
@@ -266,20 +275,22 @@ fn get_height(mut index: usize, capacity: usize) -> usize {
 }
 
 fn drop_garbage(seg: Shared<Segment>, height: usize) -> () {
+    // height is equal to zero, stop dropping
     if height == 0 {
         return;
     }
 
     unsafe {
-        let sega = seg.deref();
+        let curr_seg = seg.deref();
         for i in 0..(1 << SEGMENT_LOGSIZE) {
-            let a = sega.get_unchecked(i);
-            let b = a.load(Ordering::Relaxed);
-            let something = Shared::<Segment>::from_usize(b);
-            if !something.is_null() {
-                drop_garbage(something, height - 1);
+            let curr_usize = curr_seg.get_unchecked(i).load(Ordering::Relaxed);
+            let next = Shared::<Segment>::from_usize(curr_usize);
+            if !next.is_null() {
+                // recursive dropping
+                drop_garbage(next, height - 1);
             }
         }
+        // lastly drop current seg
         drop(seg.into_owned());
     }
 }
