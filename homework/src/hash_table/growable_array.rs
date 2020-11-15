@@ -253,7 +253,13 @@ impl<T> GrowableArray<T> {
                 let t = target.load(Ordering::Acquire);
                 if t == 0 {
                     let aux = Owned::new(Segment::new());
-                    target.compare_and_swap(0, aux.into_usize(), Ordering::Release);
+                    let aux = aux.into_shared(guard);
+                    if unsafe { something.deref().get_unchecked(position) }
+                        .compare_exchange(0, aux.into_usize(), Ordering::Release, Ordering::Relaxed)
+                        .is_err()
+                    {
+                        unsafe { drop(aux.into_owned()) };
+                    };
                     // if failure drop aux
                     continue;
                 }
