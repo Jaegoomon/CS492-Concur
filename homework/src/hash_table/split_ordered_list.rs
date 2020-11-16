@@ -70,7 +70,20 @@ impl<V> SplitOrderedList<V> {
         key: &usize,
         guard: &'s Guard,
     ) -> (usize, bool, Cursor<'s, usize, Option<V>>) {
-        todo!()
+        // size of the bucket
+        let size = self.size.load(Ordering::Acquire);
+        // convert key to index by using modulo
+        let index = key % size;
+        loop {
+            let mut cursor = self.lookup_bucket(index, guard);
+            // go to sentinel find with traverse algorithm
+            let result = cursor.find_harris(key, guard);
+            if let Ok(found) = result {
+                return (size, found, cursor);
+            } else {
+                continue;
+            }
+        }
     }
 
     fn assert_valid_key(key: usize) {
@@ -81,16 +94,41 @@ impl<V> SplitOrderedList<V> {
 impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
     fn lookup<'a>(&'a self, key: &usize, guard: &'a Guard) -> Option<&'a V> {
         Self::assert_valid_key(*key);
-        todo!()
+        let (_, found, cursor) = self.find(key, guard);
+        if found {
+            let curr = cursor.lookup().unwrap().as_ref();
+            return curr;
+        } else {
+            return None;
+        }
     }
 
     fn insert(&self, key: &usize, value: V, guard: &Guard) -> Result<(), V> {
         Self::assert_valid_key(*key);
-        todo!()
+        let (_, found, mut cursor) = self.find(key, guard);
+        if found {
+            return Err(value);
+        } else {
+            let node = Owned::new(Node::new(*key, Some(value)));
+            cursor.insert(node, guard);
+            Ok(())
+        }
     }
 
     fn delete<'a>(&'a self, key: &usize, guard: &'a Guard) -> Result<&'a V, ()> {
         Self::assert_valid_key(*key);
-        todo!()
+        let (_, found, cursor) = self.find(key, guard);
+        if found {
+            let result = cursor.delete(guard);
+            match result {
+                Ok(ok) => match ok.as_ref() {
+                    Some(v) => Ok(v),
+                    None => Err(()),
+                },
+                Err(_) => Err(()),
+            }
+        } else {
+            return Err(());
+        }
     }
 }
