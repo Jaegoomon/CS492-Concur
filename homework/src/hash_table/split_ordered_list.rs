@@ -46,7 +46,21 @@ impl<V> SplitOrderedList<V> {
     /// Creates a cursor and moves it to the bucket for the given index.  If the bucket doesn't
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
-        todo!()
+        // initialize the cursor
+        // compare bucket size with index
+        let target = self.buckets.get(index, guard);
+        let curr = target.load(Ordering::Acquire, guard);
+        if !curr.is_null() {
+            return unsafe { Cursor::from_raw(target as *const _, curr.deref() as *const _) };
+        } else {
+            // initialize the bucket
+            let sentinel = Owned::new(Node::new(index, None));
+            let sentinel = sentinel.into_shared(guard);
+            // I think I have to manage concurrency someday...
+            target.store(sentinel, Ordering::Release);
+            // recursive
+            self.lookup_bucket(index, guard)
+        }
     }
 
     /// Moves the bucket cursor returned from `lookup_bucket` to the position of the given key.

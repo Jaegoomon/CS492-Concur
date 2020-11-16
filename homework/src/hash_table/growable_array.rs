@@ -258,9 +258,9 @@ impl<T> GrowableArray<T> {
                         .compare_exchange(0, aux.into_usize(), Ordering::Release, Ordering::Relaxed)
                         .is_err()
                     {
+                        // if failure drop aux
                         unsafe { drop(aux.into_owned()) };
                     };
-                    // if failure drop aux
                     continue;
                 }
 
