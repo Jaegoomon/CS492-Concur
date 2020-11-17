@@ -46,8 +46,8 @@ impl<V> SplitOrderedList<V> {
     /// Creates a cursor and moves it to the bucket for the given index.  If the bucket doesn't
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
+        const MASK: usize = !(usize::MAX >> 1);
         loop {
-            //println!("loop1");
             let target = self.buckets.get(index, guard);
             let curr = target.load(Ordering::Acquire, guard);
 
@@ -58,30 +58,34 @@ impl<V> SplitOrderedList<V> {
                 let size = self.size.load(Ordering::Acquire);
                 let parent = get_parent(index, size);
                 if parent != 0 {
-                    let parent_bucket = self.buckets.get(parent, guard);
-                    if parent_bucket.load(Ordering::Acquire, guard).is_null() {
-                        self.lookup_bucket(parent, guard);
-                    }
+                    self.lookup_bucket(parent, guard);
                 }
 
                 // add sentinel node
-                let sentinel = Owned::new(Node::new(index.reverse_bits(), None));
+                let reverse = (index | MASK).reverse_bits();
+                let sentinel = Owned::new(Node::new(reverse, None));
                 let sentinel = sentinel.into_shared(guard);
-                if target
+                if self
+                    .buckets
+                    .get(index, guard)
                     .compare_and_set(Shared::null(), sentinel, Ordering::Release, guard)
                     .is_ok()
                 {
                     let mut cursor = self.list.head(guard);
-                    if cursor
-                        .insert(unsafe { sentinel.into_owned() }, guard)
-                        .is_ok()
-                    {
-                        let target = self.buckets.get(index, guard);
-                        let curr = target.load(Ordering::Acquire, guard);
-                        return unsafe {
-                            Cursor::from_raw(target as *const _, curr.deref() as *const _)
-                        };
+                    if let Ok(found) = cursor.find_harris(&reverse, guard) {
+                        if found {
+                            continue;
+                        }
+
+                        if cursor
+                            .insert(unsafe { sentinel.into_owned() }, guard)
+                            .is_ok()
+                        {
+                            return cursor;
+                        }
                     }
+                } else {
+                    drop(unsafe { sentinel.into_owned() });
                 }
             }
         }
@@ -94,13 +98,11 @@ impl<V> SplitOrderedList<V> {
         key: &usize,
         guard: &'s Guard,
     ) -> (usize, bool, Cursor<'s, usize, Option<V>>) {
-        // size of the bucket
-        let size = self.size.load(Ordering::Acquire);
-        // convert key to index by using modulo
-        let index = key % size;
-
         loop {
-            //println!("loop2");
+            let size = self.size.load(Ordering::Acquire);
+            // convert key to index by using modulo
+            let index = key % size;
+
             let mut cursor = self.lookup_bucket(index, guard);
             if let Ok(found) = cursor.find_harris(&(*key).reverse_bits(), guard) {
                 return (size, found, cursor);
@@ -127,16 +129,26 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
 
     fn insert(&self, key: &usize, value: V, guard: &Guard) -> Result<(), V> {
         Self::assert_valid_key(*key);
-        let (_, found, mut cursor) = self.find(key, guard);
-        if found {
-            return Err(value);
-        } else {
-            let node = Owned::new(Node::new((*key).reverse_bits(), Some(value)));
-            if cursor.insert(node, guard).is_ok() {
-                self.count.fetch_add(1, Ordering::Release);
+        let reverse = (*key).reverse_bits();
+        let mut node = Owned::new(Node::new(reverse, Some(value)));
+        loop {
+            let (_, found, mut cursor) = self.find(key, guard);
+            if found {
+                let value = node.into_box().into_value();
+                return Err(value.unwrap());
+            } else {
+                match cursor.insert(node, guard) {
+                    Ok(_) => {
+                        self.count.fetch_add(1, Ordering::Release);
+                        //println!("break");
+                        break;
+                    }
+                    Err(n) => node = n,
+                }
             }
         }
-        // check resizing is needed
+
+        // check resizing is neededs
         let count = self.count.load(Ordering::Acquire);
         let size = self.size.load(Ordering::Acquire);
         if count > 2 * size {
@@ -148,16 +160,20 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
 
     fn delete<'a>(&'a self, key: &usize, guard: &'a Guard) -> Result<&'a V, ()> {
         Self::assert_valid_key(*key);
-        let (_, found, cursor) = self.find(key, guard);
-        if found {
-            if let Ok(ok) = cursor.delete(guard) {
-                if let Some(v) = ok.as_ref() {
-                    self.count.fetch_sub(1, Ordering::Release);
-                    return Ok(v);
+        loop {
+            let (_, found, cursor) = self.find(key, guard);
+            if found {
+                match cursor.delete(guard) {
+                    Ok(value) => {
+                        self.count.fetch_sub(1, Ordering::Release);
+                        return Ok(value.as_ref().unwrap());
+                    }
+                    Err(_) => continue,
                 }
+            } else {
+                return Err(());
             }
         }
-        return Err(());
     }
 }
 
