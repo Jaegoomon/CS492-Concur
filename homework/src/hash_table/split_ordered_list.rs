@@ -46,7 +46,6 @@ impl<V> SplitOrderedList<V> {
     /// Creates a cursor and moves it to the bucket for the given index.  If the bucket doesn't
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
-        // initialize the cursor
         // compare bucket size with index
         let target = self.buckets.get(index, guard);
         let curr = target.load(Ordering::Acquire, guard);
@@ -54,12 +53,27 @@ impl<V> SplitOrderedList<V> {
             return unsafe { Cursor::from_raw(target as *const _, curr.deref() as *const _) };
         } else {
             // initialize the bucket
-            let sentinel = Owned::new(Node::new(index, None));
+            let sentinel = Owned::new(Node::new(index.reverse_bits(), None));
             let sentinel = sentinel.into_shared(guard);
-            // I think I have to manage concurrency someday...
             target.store(sentinel, Ordering::Release);
-            // recursive
-            self.lookup_bucket(index, guard)
+            //loop {
+            //    if target
+            //        .compare_and_set(Shared::null(), sentinel, Ordering::Release, guard)
+            //        .is_ok()
+            //    {
+            //        break;
+            //    };
+            //}
+            // insert sentinel node in list
+            loop {
+                let mut cursor = self.list.head(guard);
+                if cursor
+                    .insert(unsafe { sentinel.into_owned() }, guard)
+                    .is_ok()
+                {
+                    return self.lookup_bucket(index, guard);
+                }
+            }
         }
     }
 
@@ -74,14 +88,12 @@ impl<V> SplitOrderedList<V> {
         let size = self.size.load(Ordering::Acquire);
         // convert key to index by using modulo
         let index = key % size;
+
         loop {
             let mut cursor = self.lookup_bucket(index, guard);
             // go to sentinel find with traverse algorithm
-            let result = cursor.find_harris(key, guard);
-            if let Ok(found) = result {
+            if let Ok(found) = cursor.find_harris_michael(&(*key).reverse_bits(), guard) {
                 return (size, found, cursor);
-            } else {
-                continue;
             }
         }
     }
@@ -97,9 +109,9 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
         let (_, found, cursor) = self.find(key, guard);
         if found {
             let curr = cursor.lookup().unwrap().as_ref();
-            return curr;
+            curr
         } else {
-            return None;
+            None
         }
     }
 
@@ -109,7 +121,7 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
         if found {
             return Err(value);
         } else {
-            let node = Owned::new(Node::new(*key, Some(value)));
+            let node = Owned::new(Node::new((*key).reverse_bits(), Some(value)));
             cursor.insert(node, guard);
             Ok(())
         }
