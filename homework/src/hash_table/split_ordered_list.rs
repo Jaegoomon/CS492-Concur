@@ -2,7 +2,7 @@
 
 use core::mem;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_epoch::{Guard, Owned};
+use crossbeam_epoch::{Guard, Owned, Shared};
 use lockfree::list::{Cursor, List, Node};
 
 use super::growable_array::GrowableArray;
@@ -46,29 +46,42 @@ impl<V> SplitOrderedList<V> {
     /// Creates a cursor and moves it to the bucket for the given index.  If the bucket doesn't
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
-        // compare bucket size with index
-        let size = self.size.load(Ordering::Acquire);
-        let count = self.count.load(Ordering::Acquire);
-        //if count > size * 2 {
-        //    self.size.fetch_add(size, Ordering::Release);
-        //}
+        loop {
+            //println!("loop1");
+            let target = self.buckets.get(index, guard);
+            let curr = target.load(Ordering::Acquire, guard);
 
-        let target = self.buckets.get(index, guard);
-        let curr = target.load(Ordering::Acquire, guard);
-        if !curr.is_null() {
-            return unsafe { Cursor::from_raw(target as *const _, curr.deref() as *const _) };
-        } else {
-            // initialize the bucket
-            let sentinel = Owned::new(Node::new(index.reverse_bits(), None));
-            let sentinel = sentinel.into_shared(guard);
-            target.store(sentinel, Ordering::Release);
-            loop {
-                let mut cursor = self.list.head(guard);
-                if cursor
-                    .insert(unsafe { sentinel.into_owned() }, guard)
+            if !curr.is_null() {
+                return unsafe { Cursor::from_raw(target as *const _, curr.deref() as *const _) };
+            } else {
+                // check is there any parent bucket
+                let size = self.size.load(Ordering::Acquire);
+                let parent = get_parent(index, size);
+                if parent != 0 {
+                    let parent_bucket = self.buckets.get(parent, guard);
+                    if parent_bucket.load(Ordering::Acquire, guard).is_null() {
+                        self.lookup_bucket(parent, guard);
+                    }
+                }
+
+                // add sentinel node
+                let sentinel = Owned::new(Node::new(index.reverse_bits(), None));
+                let sentinel = sentinel.into_shared(guard);
+                if target
+                    .compare_and_set(Shared::null(), sentinel, Ordering::Release, guard)
                     .is_ok()
                 {
-                    return self.lookup_bucket(index, guard);
+                    let mut cursor = self.list.head(guard);
+                    if cursor
+                        .insert(unsafe { sentinel.into_owned() }, guard)
+                        .is_ok()
+                    {
+                        let target = self.buckets.get(index, guard);
+                        let curr = target.load(Ordering::Acquire, guard);
+                        return unsafe {
+                            Cursor::from_raw(target as *const _, curr.deref() as *const _)
+                        };
+                    }
                 }
             }
         }
@@ -87,9 +100,9 @@ impl<V> SplitOrderedList<V> {
         let index = key % size;
 
         loop {
+            //println!("loop2");
             let mut cursor = self.lookup_bucket(index, guard);
-            // go to sentinel find with traverse algorithm
-            if let Ok(found) = cursor.find_harris_michael(&(*key).reverse_bits(), guard) {
+            if let Ok(found) = cursor.find_harris(&(*key).reverse_bits(), guard) {
                 return (size, found, cursor);
             }
         }
@@ -122,26 +135,39 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
             if cursor.insert(node, guard).is_ok() {
                 self.count.fetch_add(1, Ordering::Release);
             }
-            Ok(())
         }
+        // check resizing is needed
+        let count = self.count.load(Ordering::Acquire);
+        let size = self.size.load(Ordering::Acquire);
+        if count > 2 * size {
+            self.size
+                .compare_and_swap(size, size * 2, Ordering::Release);
+        }
+        Ok(())
     }
 
     fn delete<'a>(&'a self, key: &usize, guard: &'a Guard) -> Result<&'a V, ()> {
         Self::assert_valid_key(*key);
         let (_, found, cursor) = self.find(key, guard);
         if found {
-            match cursor.delete(guard) {
-                Ok(ok) => match ok.as_ref() {
-                    Some(v) => {
-                        self.count.fetch_sub(1, Ordering::Release);
-                        Ok(v)
-                    }
-                    None => Err(()),
-                },
-                Err(_) => Err(()),
+            if let Ok(ok) = cursor.delete(guard) {
+                if let Some(v) = ok.as_ref() {
+                    self.count.fetch_sub(1, Ordering::Release);
+                    return Ok(v);
+                }
             }
-        } else {
-            return Err(());
+        }
+        return Err(());
+    }
+}
+
+fn get_parent(bucket: usize, size: usize) -> usize {
+    let mut parent = size;
+    loop {
+        parent = parent >> 1;
+        if parent <= bucket {
+            break;
         }
     }
+    return bucket - parent;
 }
