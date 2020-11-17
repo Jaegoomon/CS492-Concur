@@ -47,6 +47,12 @@ impl<V> SplitOrderedList<V> {
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
         // compare bucket size with index
+        let size = self.size.load(Ordering::Acquire);
+        let count = self.count.load(Ordering::Acquire);
+        //if count > size * 2 {
+        //    self.size.fetch_add(size, Ordering::Release);
+        //}
+
         let target = self.buckets.get(index, guard);
         let curr = target.load(Ordering::Acquire, guard);
         if !curr.is_null() {
@@ -56,15 +62,6 @@ impl<V> SplitOrderedList<V> {
             let sentinel = Owned::new(Node::new(index.reverse_bits(), None));
             let sentinel = sentinel.into_shared(guard);
             target.store(sentinel, Ordering::Release);
-            //loop {
-            //    if target
-            //        .compare_and_set(Shared::null(), sentinel, Ordering::Release, guard)
-            //        .is_ok()
-            //    {
-            //        break;
-            //    };
-            //}
-            // insert sentinel node in list
             loop {
                 let mut cursor = self.list.head(guard);
                 if cursor
@@ -122,7 +119,9 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
             return Err(value);
         } else {
             let node = Owned::new(Node::new((*key).reverse_bits(), Some(value)));
-            cursor.insert(node, guard);
+            if cursor.insert(node, guard).is_ok() {
+                self.count.fetch_add(1, Ordering::Release);
+            }
             Ok(())
         }
     }
@@ -131,10 +130,12 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
         Self::assert_valid_key(*key);
         let (_, found, cursor) = self.find(key, guard);
         if found {
-            let result = cursor.delete(guard);
-            match result {
+            match cursor.delete(guard) {
                 Ok(ok) => match ok.as_ref() {
-                    Some(v) => Ok(v),
+                    Some(v) => {
+                        self.count.fetch_sub(1, Ordering::Release);
+                        Ok(v)
+                    }
                     None => Err(()),
                 },
                 Err(_) => Err(()),
