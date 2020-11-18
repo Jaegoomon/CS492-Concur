@@ -8,6 +8,9 @@ use lockfree::list::{Cursor, List, Node};
 use super::growable_array::GrowableArray;
 use crate::map::NonblockingMap;
 
+const HI_MASK: usize = !(usize::MAX >> 1);
+const LOAD_FACTOR: usize = 2;
+
 /// Lock-free map from `usize` in range [0, 2^63-1] to `V`.
 ///
 /// NOTE: We don't care about hashing in this homework for simplicity.
@@ -36,7 +39,6 @@ impl<V> Default for SplitOrderedList<V> {
 
 impl<V> SplitOrderedList<V> {
     /// `size` is doubled when `count > size * LOAD_FACTOR`.
-    const LOAD_FACTOR: usize = 2;
 
     /// Creates a new split ordered list.
     pub fn new() -> Self {
@@ -46,7 +48,6 @@ impl<V> SplitOrderedList<V> {
     /// Creates a cursor and moves it to the bucket for the given index.  If the bucket doesn't
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
-        const MASK: usize = !(usize::MAX >> 1);
         loop {
             let target = self.buckets.get(index, guard);
             let curr = target.load(Ordering::Acquire, guard);
@@ -61,10 +62,11 @@ impl<V> SplitOrderedList<V> {
                     self.lookup_bucket(parent, guard);
                 }
 
-                // add sentinel node
-                let reverse = (index | MASK).reverse_bits();
+                // make sentinel node
+                let reverse = index.reverse_bits();
                 let sentinel = Owned::new(Node::new(reverse, None));
                 let sentinel = sentinel.into_shared(guard);
+                // insert sentinel node
                 if self
                     .buckets
                     .get(index, guard)
@@ -76,12 +78,9 @@ impl<V> SplitOrderedList<V> {
                         if found {
                             continue;
                         }
-
-                        if cursor
-                            .insert(unsafe { sentinel.into_owned() }, guard)
-                            .is_ok()
-                        {
-                            return cursor;
+                        match cursor.insert(unsafe { sentinel.into_owned() }, guard) {
+                            Ok(_) => return cursor,
+                            Err(n) => drop(n.into_box()),
                         }
                     }
                 } else {
@@ -98,13 +97,13 @@ impl<V> SplitOrderedList<V> {
         key: &usize,
         guard: &'s Guard,
     ) -> (usize, bool, Cursor<'s, usize, Option<V>>) {
+        let reverse = (*key | HI_MASK).reverse_bits();
         loop {
             let size = self.size.load(Ordering::Acquire);
-            // convert key to index by using modulo
             let index = key % size;
 
             let mut cursor = self.lookup_bucket(index, guard);
-            if let Ok(found) = cursor.find_harris(&(*key).reverse_bits(), guard) {
+            if let Ok(found) = cursor.find_harris_michael(&reverse, guard) {
                 return (size, found, cursor);
             }
         }
@@ -120,8 +119,7 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
         Self::assert_valid_key(*key);
         let (_, found, cursor) = self.find(key, guard);
         if found {
-            let curr = cursor.lookup().unwrap().as_ref();
-            curr
+            cursor.lookup().unwrap().as_ref()
         } else {
             None
         }
@@ -129,33 +127,28 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
 
     fn insert(&self, key: &usize, value: V, guard: &Guard) -> Result<(), V> {
         Self::assert_valid_key(*key);
-        let reverse = (*key).reverse_bits();
+        let reverse = (*key | HI_MASK).reverse_bits();
         let mut node = Owned::new(Node::new(reverse, Some(value)));
         loop {
             let (_, found, mut cursor) = self.find(key, guard);
             if found {
-                let value = node.into_box().into_value();
-                return Err(value.unwrap());
+                let failure = node.into_box().into_value();
+                return Err(failure.unwrap());
             } else {
                 match cursor.insert(node, guard) {
                     Ok(_) => {
-                        self.count.fetch_add(1, Ordering::Release);
-                        //println!("break");
-                        break;
+                        let count = self.count.fetch_add(1, Ordering::Release) + 1;
+                        let size = self.size.load(Ordering::Acquire);
+                        if count > LOAD_FACTOR * size {
+                            self.size
+                                .compare_and_swap(size, size * LOAD_FACTOR, Ordering::Release);
+                        }
+                        return Ok(());
                     }
                     Err(n) => node = n,
                 }
             }
         }
-
-        // check resizing is neededs
-        let count = self.count.load(Ordering::Acquire);
-        let size = self.size.load(Ordering::Acquire);
-        if count > 2 * size {
-            self.size
-                .compare_and_swap(size, size * 2, Ordering::Release);
-        }
-        Ok(())
     }
 
     fn delete<'a>(&'a self, key: &usize, guard: &'a Guard) -> Result<&'a V, ()> {
