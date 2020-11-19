@@ -64,8 +64,8 @@ impl<V> SplitOrderedList<V> {
 
                 // make sentinel node
                 let reverse = index.reverse_bits();
-                let sentinel = Owned::new(Node::new(reverse, None));
-                let sentinel = sentinel.into_shared(guard);
+                let sentinel = Owned::new(Node::new(reverse, None)).into_shared(guard);
+
                 // insert sentinel node
                 if self
                     .buckets
@@ -74,13 +74,13 @@ impl<V> SplitOrderedList<V> {
                     .is_ok()
                 {
                     let mut cursor = self.list.head(guard);
-                    if let Ok(found) = cursor.find_harris(&reverse, guard) {
+                    if let Ok(found) = cursor.find_harris_michael(&reverse, guard) {
                         if found {
                             continue;
                         }
                         match cursor.insert(unsafe { sentinel.into_owned() }, guard) {
                             Ok(_) => return cursor,
-                            Err(n) => drop(n.into_box()),
+                            Err(n) => drop(n),
                         }
                     }
                 } else {
@@ -128,26 +128,40 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
     fn insert(&self, key: &usize, value: V, guard: &Guard) -> Result<(), V> {
         Self::assert_valid_key(*key);
         let reverse = (*key | HI_MASK).reverse_bits();
-        let mut node = Owned::new(Node::new(reverse, Some(value)));
-        loop {
-            let (_, found, mut cursor) = self.find(key, guard);
-            if found {
-                let failure = node.into_box().into_value();
-                return Err(failure.unwrap());
-            } else {
-                match cursor.insert(node, guard) {
-                    Ok(_) => {
-                        let count = self.count.fetch_add(1, Ordering::Release) + 1;
-                        let size = self.size.load(Ordering::Acquire);
-                        if count > LOAD_FACTOR * size {
-                            self.size
-                                .compare_and_swap(size, size * LOAD_FACTOR, Ordering::Release);
-                        }
-                        return Ok(());
-                    }
-                    Err(n) => node = n,
+        //let mut node = Owned::new(Node::new(reverse, Some(value)));
+        //loop {
+        //    let (_, found, mut cursor) = self.find(key, guard);
+        //    if found {
+        //        let failure = node.into_box().into_value();
+        //        return Err(failure.unwrap());
+        //    } else {
+        //        match cursor.insert(node, guard) {
+        //            Ok(_) => {
+        //                let count = self.count.fetch_add(1, Ordering::Release) + 1;
+        //                let size = self.size.load(Ordering::Acquire);
+        //                if count > LOAD_FACTOR * size {
+        //                    self.size
+        //                        .compare_and_swap(size, size * LOAD_FACTOR, Ordering::Release);
+        //                }
+        //                return Ok(());
+        //            }
+        //            Err(n) => node = n,
+        //        }
+        //    }
+        //}
+        let (_, found, _) = self.find(key, guard);
+        if found {
+            return Err(value);
+        } else {
+            if self.list.harris_insert(reverse, Some(value), guard) {
+                let count = self.count.fetch_add(1, Ordering::Release) + 1;
+                let size = self.size.load(Ordering::Acquire);
+                if count > LOAD_FACTOR * size {
+                    self.size
+                        .compare_and_swap(size, size * LOAD_FACTOR, Ordering::Release);
                 }
             }
+            return Ok(());
         }
     }
 
