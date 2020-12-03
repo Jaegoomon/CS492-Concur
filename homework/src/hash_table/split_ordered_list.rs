@@ -73,14 +73,20 @@ impl<V> SplitOrderedList<V> {
                     .compare_and_set(Shared::null(), sentinel, Ordering::Release, guard)
                     .is_ok()
                 {
-                    let mut cursor = self.list.head(guard);
-                    if let Ok(found) = cursor.find_harris_michael(&reverse, guard) {
-                        if found {
-                            continue;
-                        }
-                        match cursor.insert(unsafe { sentinel.into_owned() }, guard) {
-                            Ok(_) => return cursor,
-                            Err(n) => drop(n),
+                    let mut sentinel = unsafe { sentinel.into_owned() };
+                    loop {
+                        let mut cursor = self.list.head(guard);
+                        if let Ok(found) = cursor.find_harris(&reverse, guard) {
+                            if found {
+                                // Why do I write continue?
+                                drop(sentinel);
+                                return cursor;
+                                //continue;
+                            }
+                            match cursor.insert(sentinel, guard) {
+                                Ok(_) => return cursor,
+                                Err(n) => sentinel = n,
+                            }
                         }
                     }
                 } else {
@@ -128,6 +134,57 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
     fn insert(&self, key: &usize, value: V, guard: &Guard) -> Result<(), V> {
         Self::assert_valid_key(*key);
         let reverse = (*key | HI_MASK).reverse_bits();
+        //case 1: succeed
+        let mut node = Owned::new(Node::new(reverse, Some(value)));
+        let (_, found, _) = self.find(key, guard);
+        if found {
+            let failure = node.into_box().into_value();
+            return Err(failure.unwrap());
+        } else {
+            loop {
+                let mut cursor = self.list.head(guard);
+                if let Ok(f) = cursor.find_harris(&reverse, guard) {
+                    if f {
+                        let failure = node.into_box().into_value();
+                        return Err(failure.unwrap());
+                    } else {
+                        match cursor.insert(node, guard) {
+                            Ok(_) => {
+                                let count = self.count.fetch_add(1, Ordering::Release);
+                                let size = self.size.load(Ordering::Acquire);
+                                if count > LOAD_FACTOR * size {
+                                    self.size.compare_and_swap(
+                                        size,
+                                        size * LOAD_FACTOR,
+                                        Ordering::Release,
+                                    );
+                                }
+                                return Ok(());
+                            }
+                            Err(n) => node = n,
+                        }
+                    }
+                }
+            }
+        }
+
+        // case2: succedd
+        //let (_, found, _) = self.find(key, guard);
+        //if found {
+        //    return Err(value);
+        //} else {
+        //    if self.list.harris_insert(reverse, Some(value), guard) {
+        //        let count = self.count.fetch_add(1, Ordering::Release) + 1;
+        //        let size = self.size.load(Ordering::Acquire);
+        //        if count > LOAD_FACTOR * size {
+        //            self.size
+        //                .compare_and_swap(size, size * LOAD_FACTOR, Ordering::Release);
+        //        }
+        //    }
+        //    return Ok(());
+        //}
+
+        // case3: fail
         //let mut node = Owned::new(Node::new(reverse, Some(value)));
         //loop {
         //    let (_, found, mut cursor) = self.find(key, guard);
@@ -149,20 +206,6 @@ impl<V> NonblockingMap<usize, V> for SplitOrderedList<V> {
         //        }
         //    }
         //}
-        let (_, found, _) = self.find(key, guard);
-        if found {
-            return Err(value);
-        } else {
-            if self.list.harris_insert(reverse, Some(value), guard) {
-                let count = self.count.fetch_add(1, Ordering::Release) + 1;
-                let size = self.size.load(Ordering::Acquire);
-                if count > LOAD_FACTOR * size {
-                    self.size
-                        .compare_and_swap(size, size * LOAD_FACTOR, Ordering::Release);
-                }
-            }
-            return Ok(());
-        }
     }
 
     fn delete<'a>(&'a self, key: &usize, guard: &'a Guard) -> Result<&'a V, ()> {
