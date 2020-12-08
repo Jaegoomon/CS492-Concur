@@ -41,7 +41,19 @@ impl LocalHazards {
     ///
     /// This function must be called only by the thread that owns this hazard array.
     pub unsafe fn alloc(&self, data: usize) -> Option<usize> {
-        todo!()
+        // if array is full
+        let curr = self.occupied.load(Ordering::Acquire);
+        if !curr == 0 {
+            return None;
+        } else {
+            let mut n: u8 = 1;
+            while curr & n != 0 {
+                n = n << 1;
+            }
+            let index = n.trailing_zeros() as usize;
+            self.elements[index].store(data, Ordering::Release);
+            Some(index)
+        }
     }
 
     /// Clears the hazard pointer at the given index.
@@ -51,7 +63,9 @@ impl LocalHazards {
     /// This function must be called only by the thread that owns this hazard array. The index must
     /// have been allocated.
     pub unsafe fn dealloc(&self, index: usize) {
-        todo!()
+        let bit_index = 1 << index;
+        self.elements[index].store(0, Ordering::Release);
+        self.occupied.fetch_and(!bit_index, Ordering::Relaxed);
     }
 
     /// Returns an iterator of hazard pointers (with tags erased).
@@ -73,7 +87,17 @@ impl Iterator for LocalHazardsIter<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        if self.occupied == 0 {
+            return None;
+        } else {
+            let mut n: u8 = 1;
+            while n & self.occupied == 0 {
+                n = n << 1;
+            }
+            self.occupied = self.occupied & !n;
+            let index = n.trailing_zeros() as usize;
+            return Some(self.hazards.elements[index].load(Ordering::Relaxed));
+        }
     }
 }
 
@@ -94,7 +118,17 @@ impl<'s, T> Shield<'s, T> {
     ///
     /// This function must be called only by the thread that owns this hazard array.
     pub unsafe fn new(pointer: Shared<T>, hazards: &'s LocalHazards) -> Option<Self> {
-        todo!()
+        let data = pointer.into_usize();
+        if let Some(index) = hazards.alloc(data) {
+            Some(Shield {
+                data: data,
+                hazards: hazards,
+                index: index,
+                _marker: PhantomData,
+            })
+        } else {
+            return None;
+        }
     }
 
     /// Returns `true` if the pointer is null.
@@ -121,13 +155,18 @@ impl<'s, T> Shield<'s, T> {
 
     /// Check if `pointer` is protected by the shield. The tags are ignored.
     pub fn validate(&self, pointer: Shared<T>) -> bool {
-        todo!()
+        if self.data == pointer.into_usize() {
+            return true;
+        } else {
+            return false;
+        }
     }
 }
 
 impl<'s, T> Drop for Shield<'s, T> {
     fn drop(&mut self) {
-        todo!()
+        let index = self.index;
+        unsafe { self.hazards.dealloc(index) };
     }
 }
 
