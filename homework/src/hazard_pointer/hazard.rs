@@ -41,8 +41,8 @@ impl LocalHazards {
     ///
     /// This function must be called only by the thread that owns this hazard array.
     pub unsafe fn alloc(&self, data: usize) -> Option<usize> {
-        let tid = std::thread::current().id();
-        assert_eq!(Hazards::new().get(tid), self);
+        //let tid = std::thread::current().id();
+        //assert_eq!(Hazards::new().get(tid), self);
         // if array is full
         let curr = self.occupied.load(Ordering::Acquire);
         if !curr == 0 {
@@ -65,8 +65,8 @@ impl LocalHazards {
     /// This function must be called only by the thread that owns this hazard array. The index must
     /// have been allocated.
     pub unsafe fn dealloc(&self, index: usize) {
-        let tid = std::thread::current().id();
-        assert_eq!(Hazards::new().get(tid), self);
+        //let tid = std::thread::current().id();
+        //assert_eq!(Hazards::new().get(tid), self);
         let bit_index = 1 << index;
         self.elements[index].store(0, Ordering::Release);
         self.occupied.fetch_and(!bit_index, Ordering::Relaxed);
@@ -122,8 +122,8 @@ impl<'s, T> Shield<'s, T> {
     ///
     /// This function must be called only by the thread that owns this hazard array.
     pub unsafe fn new(pointer: Shared<T>, hazards: &'s LocalHazards) -> Option<Self> {
-        let tid = std::thread::current().id();
-        assert_eq!(Hazards::new().get(tid), hazards);
+        //let tid = std::thread::current().id();
+        //assert_eq!(Hazards::new().get(tid), hazards);
         let data = pointer.into_usize();
         if let Some(index) = hazards.alloc(data) {
             Some(Shield {

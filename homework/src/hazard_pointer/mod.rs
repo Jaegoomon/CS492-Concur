@@ -57,7 +57,9 @@ thread_local! {
 /// Returns `None` if the current thread's hazard array is fully occupied. The returned shield must
 /// be validated before using.
 pub fn protect<T>(pointer: Shared<T>) -> Option<Shield<'static, T>> {
-    todo!()
+    let tid = std::thread::current().id();
+    let local_hazards = HAZARDS.get(tid);
+    unsafe { Shield::new(pointer.with_tag(1), local_hazards) }
 }
 
 /// Retires a pointer.
