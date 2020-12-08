@@ -200,28 +200,31 @@ impl<T> GrowableArray<T> {
     /// necessary.
     pub fn get(&self, mut index: usize, guard: &Guard) -> &Atomic<T> {
         // check if root is null_ptr
-        let root = self.root.load(Ordering::Acquire, guard);
-        if root.is_null() {
-            // allocate new segment
-            let new_seg = Owned::new(Segment::new()).with_tag(1);
-            let new_seg = new_seg.into_shared(guard);
-
-            // CAS with root and new Segment
-            if self
-                .root
-                .compare_and_set(root, new_seg, Ordering::Release, guard)
-                .is_err()
-            {
+        let new_seg = Owned::new(Segment::new()).with_tag(1);
+        let new_seg = new_seg.into_shared(guard);
+        loop {
+            let root = self.root.load(Ordering::Acquire, guard);
+            if root.is_null() {
+                // CAS with root and new Segment
+                if self
+                    .root
+                    .compare_and_set(root, new_seg, Ordering::Release, guard)
+                    .is_ok()
+                {
+                    break;
+                }
+            } else {
                 unsafe { drop(new_seg.into_owned()) };
+                break;
             }
         }
 
         // check the segment range can hold the index
         let h = get_height(index, SEGMENT_LOGSIZE);
         loop {
-            let h_array = self.root.load(Ordering::Acquire, guard).tag();
-            if h > h_array {
-                let child = self.root.load(Ordering::Acquire, guard);
+            let child = self.root.load(Ordering::Acquire, guard);
+            if h > child.tag() {
+                //let child = self.root.load(Ordering::Acquire, guard);
                 let parent = Owned::new(Segment::new()).with_tag(child.tag() + 1);
                 parent[0].store(child.into_usize(), Ordering::Release);
 
@@ -251,6 +254,7 @@ impl<T> GrowableArray<T> {
                 }
 
                 let t = target.load(Ordering::Acquire);
+                // implement new branch
                 if t == 0 {
                     let aux = Owned::new(Segment::new());
                     let aux = aux.into_shared(guard);
@@ -260,10 +264,13 @@ impl<T> GrowableArray<T> {
                     {
                         // if failure drop aux
                         unsafe { drop(aux.into_owned()) };
-                    };
+                    } else {
+                        something = aux;
+                        th -= 1;
+                    }
                     continue;
                 }
-
+                // keep going
                 something = unsafe { Shared::<Segment>::from_usize(t) };
                 th -= 1;
             }

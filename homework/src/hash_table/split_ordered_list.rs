@@ -45,13 +45,61 @@ impl<V> SplitOrderedList<V> {
         Self::default()
     }
 
+    fn is_null_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> bool {
+        let target = self.buckets.get(index, guard);
+        let bucket = target.load(Ordering::Acquire, guard);
+        bucket.is_null()
+    }
+
     /// Creates a cursor and moves it to the bucket for the given index.  If the bucket doesn't
     /// exist, recursively initializes the buckets.
     fn lookup_bucket<'s>(&'s self, index: usize, guard: &'s Guard) -> Cursor<'s, usize, Option<V>> {
+        //let reverse = index.reverse_bits();
+        //let sentinel = Owned::new(Node::new(reverse, None)).into_shared(guard);
+        //// parent check
+        //let size = self.size.load(Ordering::Acquire);
+        //let parent = get_parent(index, size);
+        //if parent != 0 {
+        //    if self.is_null_bucket(parent, guard) {
+        //        self.lookup_bucket(parent, guard);
+        //    }
+        //}
+        //loop {
+        //    let mut cursor = self.list.head(guard);
+        //    if let Ok(found) = cursor.find_harris(&reverse, guard) {
+        //        if found {
+        //            drop(unsafe { sentinel.into_owned() });
+        //            return cursor;
+        //        } else {
+        //            let bucket = self.buckets.get(index, guard);
+        //            if !bucket.load(Ordering::Acquire, guard).is_null() {
+        //                continue;
+        //            }
+        //            if bucket
+        //                .compare_and_set(Shared::null(), sentinel, Ordering::Release, guard)
+        //                .is_ok()
+        //            {
+        //                let mut sentinel = unsafe { sentinel.into_owned() };
+        //                loop {
+        //                    let mut cursor = self.list.head(guard);
+        //                    if let Ok(found) = cursor.find_harris(&reverse, guard) {
+        //                        if found {
+        //                            drop(sentinel);
+        //                            return cursor;
+        //                        }
+        //                    }
+        //                    match cursor.insert(sentinel, guard) {
+        //                        Ok(_) => return cursor,
+        //                        Err(n) => sentinel = n,
+        //                    }
+        //                }
+        //            }
+        //        }
+        //    }
+        //}
         loop {
             let target = self.buckets.get(index, guard);
             let curr = target.load(Ordering::Acquire, guard);
-
             if !curr.is_null() {
                 return unsafe { Cursor::from_raw(target as *const _, curr.deref() as *const _) };
             } else {
@@ -61,11 +109,9 @@ impl<V> SplitOrderedList<V> {
                 if parent != 0 {
                     self.lookup_bucket(parent, guard);
                 }
-
                 // make sentinel node
                 let reverse = index.reverse_bits();
                 let sentinel = Owned::new(Node::new(reverse, None)).into_shared(guard);
-
                 // insert sentinel node
                 if self
                     .buckets
