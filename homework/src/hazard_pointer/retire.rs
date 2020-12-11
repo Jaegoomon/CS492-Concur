@@ -30,13 +30,18 @@ impl<'s> Retirees<'s> {
             debug_assert_eq!(align::decompose_tag::<T>(data).1, 0);
             drop(Box::from_raw(data as *mut T))
         }
+
+        let tid = std::thread::current().id();
+        let local = self.hazards.get(tid);
         let data = pointer.into_usize();
-        if align::decompose_tag::<T>(data).1 == 0 {
+        let is_contain = local.iter().any(|x| x == data);
+        if !is_contain {
             unsafe { drop(Box::from_raw(data as *mut T)) }
         } else {
             if self.inner.len() >= Retirees::THRESHOLD {
                 self.collect()
             }
+            // synchronization is needed
             self.inner.push((pointer.into_usize(), free::<T>))
         }
     }
@@ -44,13 +49,23 @@ impl<'s> Retirees<'s> {
     /// Free the pointers that are `retire`d by the current thread and not `protect`ed by any other
     /// threads.
     pub fn collect(&mut self) {
+        let tid = std::thread::current().id();
+        let local = self.hazards.get(tid);
         let mut index = self.inner.len();
-        while index > 0 {
+        // synchronization is needed
+        loop {
             let data = self.inner[index].0;
-            if align::decompose_tag::<T>(data).1 == 0 {}
+            let is_contain = local.iter().any(|x| x == data);
+            if !is_contain {
+                let f = self.inner[index].1;
+                unsafe { f(data) };
+                self.inner.remove(index);
+            }
+            if index == 0 {
+                break;
+            }
             index = index - 1;
         }
-        todo!()
     }
 }
 

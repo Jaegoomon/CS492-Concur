@@ -180,7 +180,8 @@ impl<'s, T> Shield<'s, T> {
 
     /// Check if `pointer` is protected by the shield. The tags are ignored.
     pub fn validate(&self, pointer: Shared<T>) -> bool {
-        if self.data == pointer.into_usize() {
+        let index = self.index;
+        if self.hazards.elements[index].load(Ordering::Relaxed) == pointer.into_usize() {
             return true;
         } else {
             return false;
