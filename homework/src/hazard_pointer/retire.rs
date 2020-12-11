@@ -8,7 +8,7 @@ use super::hazard::Hazards;
 pub struct Retirees<'s> {
     hazards: &'s Hazards,
     /// The first element of the pair is the machine representation of a pointer without tag and
-    /// the second is the function pointer to `free::<T>` where `T` is the type of the object. 
+    /// the second is the function pointer to `free::<T>` where `T` is the type of the object.
     inner: Vec<(usize, unsafe fn(usize))>,
 }
 
@@ -30,13 +30,26 @@ impl<'s> Retirees<'s> {
             debug_assert_eq!(align::decompose_tag::<T>(data).1, 0);
             drop(Box::from_raw(data as *mut T))
         }
-
-        todo!()
+        let data = pointer.into_usize();
+        if align::decompose_tag::<T>(data).1 == 0 {
+            unsafe { drop(Box::from_raw(data as *mut T)) }
+        } else {
+            if self.inner.len() >= Retirees::THRESHOLD {
+                self.collect()
+            }
+            self.inner.push((pointer.into_usize(), free::<T>))
+        }
     }
 
     /// Free the pointers that are `retire`d by the current thread and not `protect`ed by any other
     /// threads.
     pub fn collect(&mut self) {
+        let mut index = self.inner.len();
+        while index > 0 {
+            let data = self.inner[index].0;
+            if align::decompose_tag::<T>(data).1 == 0 {}
+            index = index - 1;
+        }
         todo!()
     }
 }
