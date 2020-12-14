@@ -48,8 +48,6 @@ impl LocalHazards {
     ///
     /// This function must be called only by the thread that owns this hazard array.
     pub unsafe fn alloc(&self, data: usize) -> Option<usize> {
-        //let tid = std::thread::current().id();
-        //assert_eq!(Hazards::new().get(tid), self);
         // if array is full
         let curr = self.occupied.load(Ordering::Acquire);
         if !curr == 0 {
@@ -61,6 +59,7 @@ impl LocalHazards {
             }
             let index = n.trailing_zeros() as usize;
             self.elements[index].store(data, Ordering::Release);
+            self.occupied.fetch_or(n, Ordering::Release);
             Some(index)
         }
     }
@@ -72,11 +71,9 @@ impl LocalHazards {
     /// This function must be called only by the thread that owns this hazard array. The index must
     /// have been allocated.
     pub unsafe fn dealloc(&self, index: usize) {
-        //let tid = std::thread::current().id();
-        //assert_eq!(Hazards::new().get(tid), self);
         let bit_index = 1 << index;
         self.elements[index].store(0, Ordering::Release);
-        self.occupied.fetch_and(!bit_index, Ordering::Relaxed);
+        self.occupied.fetch_and(!bit_index, Ordering::Release);
     }
 
     /// Returns an iterator of hazard pointers (with tags erased).
@@ -107,7 +104,7 @@ impl Iterator for LocalHazardsIter<'_> {
             }
             self.occupied = self.occupied & !n;
             let index = n.trailing_zeros() as usize;
-            return Some(self.hazards.elements[index].load(Ordering::Relaxed));
+            return Some(self.hazards.elements[index].load(Ordering::Acquire));
         }
     }
 }
@@ -185,7 +182,7 @@ impl<'s, T> Shield<'s, T> {
     /// Check if `pointer` is protected by the shield. The tags are ignored.
     pub fn validate(&self, pointer: Shared<T>) -> bool {
         let index = self.index;
-        if self.hazards.elements[index].load(Ordering::Relaxed) == pointer.into_usize() {
+        if self.hazards.elements[index].load(Ordering::Acquire) == pointer.into_usize() {
             return true;
         } else {
             return false;
@@ -197,6 +194,7 @@ impl<'s, T> Drop for Shield<'s, T> {
     fn drop(&mut self) {
         let index = self.index;
         unsafe { self.hazards.dealloc(index) };
+        //unsafe { drop(self.shared().into_owned()) };
     }
 }
 

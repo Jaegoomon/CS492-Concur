@@ -33,39 +33,36 @@ impl<'s> Retirees<'s> {
             debug_assert_eq!(align::decompose_tag::<T>(data).1, 0);
             drop(Box::from_raw(data as *mut T))
         }
-        // find local hazards
-        let tid = std::thread::current().id();
-        let curr_hazard_list = self.hazards.get(tid);
-        fence(Ordering::Acquire);
+
         let data = pointer.into_usize();
-        let is_protected = curr_hazard_list.iter().any(|x| x == data);
-        if !is_protected {
-            // check pointer is protected by other thread
-            let hazards_set = self.hazards.all_hazards();
-            fence(Ordering::Acquire);
-            if hazards_set.get(&data).is_none() {
-                unsafe { drop(Box::from_raw(data as *mut T)) };
-            }
-        } else {
-            if self.inner.len() >= Retirees::THRESHOLD {
-                self.collect()
-            }
-            self.inner.push((data, free::<T>));
+        let (data1, _) = align::decompose_tag::<T>(data);
+        if self.inner.len() >= Retirees::THRESHOLD {
+            self.collect();
+        }
+        self.inner.push((data1, free::<T>));
+
+        fence(Ordering::SeqCst);
+
+        let hazards_set = self.hazards.all_hazards();
+        if hazards_set.get(&data).is_none() {
+            //println!("drop-retire");
+            let (d, f) = self.inner.pop().unwrap();
+            unsafe { f(d) };
         }
     }
     /// Free the pointers that are `retire`d by the current thread and not `protect`ed by any other
     /// threads.
     pub fn collect(&mut self) {
         let mut index = self.inner.len();
-        while index == 0 {
+        while index != 0 {
+            fence(Ordering::SeqCst);
             let hazards_set = self.hazards.all_hazards();
-            fence(Ordering::Acquire);
-            let data = self.inner[index - 1].0;
+            let (data, f) = self.inner[index - 1];
             if hazards_set.get(&data).is_none() {
-                let f = self.inner[index - 1].1;
+                //println!("drop-collect");
                 unsafe { f(data) };
+                self.inner.remove(index - 1);
             }
-            self.inner.remove(index - 1);
             index = index - 1;
         }
     }

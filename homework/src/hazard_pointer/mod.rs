@@ -96,8 +96,18 @@ pub fn protect<T>(pointer: Shared<T>) -> Option<Shield<'static, T>> {
 /// Returns a validated shield. Returns `None` if the current thread's hazard array is fully
 /// occupied.
 pub fn get_protected<T>(atomic: &Atomic<T>) -> Option<Shield<'static, T>> {
-    let shared = atomic.load(Ordering::Relaxed);
-    protect(shared)
+    let shared = atomic.load(Ordering::Acquire);
+    if let Some(shield) = protect(shared) {
+        fence(Ordering::SeqCst);
+
+        if shield.validate(shared) {
+            return Some(shield);
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    }
 }
 
 /// Retires a pointer.
