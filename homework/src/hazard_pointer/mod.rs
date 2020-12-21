@@ -105,23 +105,25 @@ thread_local! {
 pub fn protect<T>(pointer: Shared<T>) -> Option<Shield<'static, T>> {
     let tid = thread::current().id();
     let local_hazards = HAZARDS.get(tid);
-    unsafe { Shield::new(pointer, local_hazards) }
+    let sheild = unsafe { Shield::new(pointer, local_hazards) };
+    fence(Ordering::SeqCst);
+    sheild
 }
 
 /// Returns a validated shield. Returns `None` if the current thread's hazard array is fully
 /// occupied.
 pub fn get_protected<T>(atomic: &Atomic<T>) -> Option<Shield<'static, T>> {
-    let shared = atomic.load(Ordering::Acquire);
-    if let Some(shield) = protect(shared) {
-        fence(Ordering::SeqCst);
-
-        if shield.validate(shared) {
-            return Some(shield);
+    loop {
+        if let Some(shield) = protect(atomic.load(Ordering::Relaxed)) {
+            //fence(Ordering::SeqCst);
+            if shield.validate(atomic.load(Ordering::Relaxed)) {
+                return Some(shield);
+            }
         } else {
             return None;
         }
-    } else {
-        return None;
+        #[cfg(feature = "check-loom")]
+        loom::sync::atomic::spin_loop_hint();
     }
 }
 

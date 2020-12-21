@@ -45,7 +45,6 @@ impl<'s> Retirees<'s> {
 
         let hazards_set = self.hazards.all_hazards();
         if hazards_set.get(&data).is_none() {
-            //println!("drop-retire");
             let (d, f) = self.inner.pop().unwrap();
             unsafe { f(d) };
         }
@@ -55,11 +54,10 @@ impl<'s> Retirees<'s> {
     pub fn collect(&mut self) {
         let mut index = self.inner.len();
         while index != 0 {
+            let (data, f) = self.inner[index - 1];
             fence(Ordering::SeqCst);
             let hazards_set = self.hazards.all_hazards();
-            let (data, f) = self.inner[index - 1];
             if hazards_set.get(&data).is_none() {
-                //println!("drop-collect");
                 unsafe { f(data) };
                 self.inner.remove(index - 1);
             }

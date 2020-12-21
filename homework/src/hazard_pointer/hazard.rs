@@ -125,9 +125,8 @@ impl<'s, T> Shield<'s, T> {
     ///
     /// This function must be called only by the thread that owns this hazard array.
     pub unsafe fn new(pointer: Shared<T>, hazards: &'s LocalHazards) -> Option<Self> {
-        //let tid = std::thread::current().id();
-        //assert_eq!(Hazards::new().get(tid), hazards);
         let data = pointer.into_usize();
+        //let (data, _) = align::decompose_tag::<T>(pointer.into_usize());
         if let Some(index) = hazards.alloc(data) {
             Some(Shield {
                 data: data,
@@ -181,8 +180,7 @@ impl<'s, T> Shield<'s, T> {
 
     /// Check if `pointer` is protected by the shield. The tags are ignored.
     pub fn validate(&self, pointer: Shared<T>) -> bool {
-        let index = self.index;
-        if self.hazards.elements[index].load(Ordering::Acquire) == pointer.into_usize() {
+        if self.data == pointer.into_usize() {
             return true;
         } else {
             return false;
@@ -194,7 +192,6 @@ impl<'s, T> Drop for Shield<'s, T> {
     fn drop(&mut self) {
         let index = self.index;
         unsafe { self.hazards.dealloc(index) };
-        //unsafe { drop(self.shared().into_owned()) };
     }
 }
 
